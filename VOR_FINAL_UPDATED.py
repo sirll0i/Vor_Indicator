@@ -78,8 +78,13 @@ class VORSimulatorGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Enhanced VOR Simulator")
-        self.root.focus_set()  # Enable keyboard focus
+        self.root.focus_set()
 
+        root.state('zoomed')
+        
+        self.vor_output_visible = True
+        self.vor_output_panel_items = []
+        self.vor_show_tab = None
         # Load background image
         try:
             script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -93,37 +98,40 @@ class VORSimulatorGUI:
             print("Warning: 'map_bg.png' not found. Using blank background.")
             self.tk_img = None
 
-        #self.canvas = tk.Canvas(root, width=1200, height=730, bg="lightblue")
-        #self.canvas.pack()
-
-        root.state('zoomed')  # This maximizes the window (works on Windows)
+        # Canvas setup (only once!)
         self.canvas = tk.Canvas(root, bg="lightblue")
-        self.canvas.pack(expand=True, fill="both")  # Fill entire window and center content
+        self.canvas.pack(expand=True, fill="both")
+        self.canvas.bind("<Configure>", self.on_canvas_resize)
         if self.tk_img:
             self.canvas.create_image(0, 0, anchor="nw", image=self.tk_img)
 
-        # Aircraft state
-        self.air_x_val = 10
+        # --- Aircraft and VOR State ---
+        self.air_x_val = 10   # grid units (0–100)
         self.air_y_val = 10
+        self.vor_x = 50 * 5   # grid units scaled for canvas
+        self.vor_y = 50 * 5
         self.airplane_marker = None
         self.airplane_img = None
         self.airplane_angle = 0
         self.obs_angle = 0
         self.speed = 0.7  # Default speed
-        self.show_all_radials = True  # Toggle for showing all radials
+        self.show_all_radials = True
 
-        # VOR elements
-        self.vor_x = 50 * 5  # VOR at grid position 50,50 (scaled for canvas)
-        self.vor_y = 50 * 5
-        self.radial_line = None  # Will hold the radial line object
-        self.recip_radial_line = None  # Will hold the reciprocal radial line
-        self.all_radials = []  # Will hold all radial lines (every 10 degrees)
+        # VOR graphical elements
+        self.radial_line = None
+        self.recip_radial_line = None
+        self.all_radials = []
         self.triangular_gradient = []
-        self.radial_labels = []  # Will hold text labels for radials
-        self.compass_rose_elements = []  # Will hold compass rose markings for rotation
-        self.obs_rose_elements = []  # Will hold OBS rose markings for rotation
+        self.radial_labels = []
+        self.compass_rose_elements = []
+        self.obs_rose_elements = []
 
-        # Initialize joystick support BEFORE control panel
+        # Set indicator radius *before* indicator creation
+        width = self.canvas.winfo_width() or 1800
+        height = self.canvas.winfo_height() or 900
+        self.indicator_radius = max(min(width, height) * 0.1, 60)
+
+        # Joystick support
         self.joystick = None
         self.joystick_enabled = False
         if PYGAME_AVAILABLE:
@@ -131,56 +139,73 @@ class VORSimulatorGUI:
                 pygame.init()
                 pygame.joystick.init()
                 joystick_count = pygame.joystick.get_count()
-                print(f"Detected {joystick_count} joystick(s)")
-                
                 if joystick_count > 0:
                     self.joystick = pygame.joystick.Joystick(0)
                     self.joystick.init()
                     self.joystick_enabled = True
-                    print(f"Joystick detected and initialized: {self.joystick.get_name()}")
-                    print(f"Joystick has {self.joystick.get_numaxes()} axes")
-                    print(f"Joystick has {self.joystick.get_numbuttons()} buttons")
+                    print(f"Joystick detected: {self.joystick.get_name()}")
                 else:
                     print("No joystick detected")
             except Exception as e:
                 print(f"Joystick initialization failed: {e}")
                 self.joystick_enabled = False
 
-        # Create control panel
+        # ---- GUI PANELS/INDICATORS ----
         self.create_control_panel()
-
-        # Draw VOR station and initial radials
         self.draw_vor_station()
-        
-        # Create output labels and indicators
         self.create_output_labels()
         self.create_indicators()
+        
 
-        # Load or create airplane image
+        # --- Airplane image
         self.load_airplane_image()
 
-        # Setup key bindings for continuous movement
+        # Keyboard control
         self.pressed_keys = set()
         self.root.bind("<KeyPress>", self.on_key_press)
         self.root.bind("<KeyRelease>", self.on_key_release)
-        
-        # Mouse/trackpad control variables
+
+        # Mouse control
         self.mouse_control_enabled = False
         self.last_mouse_x = 0
         self.last_mouse_y = 0
         self.mouse_center_x = 0
         self.mouse_center_y = 0
-        
-        # Setup mouse bindings for aircraft control
-        self.canvas.bind("<Button-1>", self.on_mouse_click)  # Left click to enable mouse control
-        self.canvas.bind("<Button-3>", self.disable_mouse_control)  # Right click to disable
+        self.canvas.bind("<Button-1>", self.on_canvas_click)
+        self.canvas.bind("<Button-3>", self.disable_mouse_control)
         self.canvas.bind("<Motion>", self.on_mouse_motion)
-        
-        self.movement_loop()
 
-        # Initial draw and update
+        self.movement_loop()
         self.draw_airplane(self.air_x_val, self.air_y_val, self.airplane_angle)
         self.update_vor_output()
+
+    def on_canvas_click(self, event):
+        # Check hide button
+        if self.vor_output_visible and hasattr(self, "vor_output_hide_area"):
+            x1, y1, x2, y2 = self.vor_output_hide_area
+            if x1 <= event.x <= x2 and y1 <= event.y <= y2:
+                self.vor_output_visible = False
+                self.create_output_labels()
+                return
+        # Check show tab
+        elif not self.vor_output_visible and hasattr(self, "vor_output_show_area"):
+            x1, y1, x2, y2 = self.vor_output_show_area
+            if x1 <= event.x <= x2 and y1 <= event.y <= y2:
+                self.vor_output_visible = True
+                self.create_output_labels()
+                return
+        # Else: pass through to old mouse logic for aircraft control
+        self.on_mouse_click(event)
+
+
+    def grid_to_canvas(self, x_grid, y_grid):
+        width = self.canvas.winfo_width()
+        height = self.canvas.winfo_height()
+        # Your grid goes from 0 to 100 (change if needed)
+        canvas_x = x_grid / 100 * width
+        canvas_y = y_grid / 100 * height
+        return canvas_x, canvas_y
+
 
     def create_control_panel(self):
         """Create control panel with buttons and sliders."""
@@ -284,14 +309,19 @@ class VORSimulatorGUI:
             self.draw_radial_labels()
 
     def draw_radial_labels(self):
-        """Draw labels for major radials."""
-        vx, vy = self.vor_x, self.vor_y
-        radius = 150  # Distance from VOR for labels
+        """Draw labels for major radials (responsive)."""
+        # Convert grid units to canvas pixel units
+        vx, vy = self.grid_to_canvas(self.vor_x, self.vor_y)
         
+        # Use a radius that depends on the current canvas size
+        width = self.canvas.winfo_width()
+        height = self.canvas.winfo_height()
+        radius = min(width, height) * 0.08  # Example: 8% of smallest screen dimension
+
         for angle in range(0, 360, 30):
             label_x = vx + radius * sin(radians(angle))
             label_y = vy - radius * cos(radians(angle))
-            
+
             radial_text = f"{angle:03d}\u00b0"
             label = self.canvas.create_text(
                 label_x, label_y, 
@@ -301,6 +331,45 @@ class VORSimulatorGUI:
                 tags="radial_label"
             )
             self.radial_labels.append(label)
+
+    def create_indicators(self):
+        self.create_heading_indicator()
+        self.create_cdi_indicator()
+        self.create_obs_indicator()
+        self.update_all_meters()
+
+    def update_all_meters(self):
+        ax = self.air_x_val
+        ay = self.air_y_val
+        vx, vy = 50, 50
+        obs = self.obs_angle
+        hdg = self.airplane_angle % 360
+        bearing_to_vor = calculate_bearing(ax, ay, vx, vy)
+        direction = calculate_vor_to_from(obs, bearing_to_vor)
+        self.update_heading_indicator(hdg)
+        self.update_cdi_indicator(obs, bearing_to_vor, direction)
+        self.update_obs_indicator(obs)
+        self.update_obs_cdi_needle(obs, bearing_to_vor)
+
+
+    def redraw_all(self, event=None):
+        width = self.canvas.winfo_width()
+        height = self.canvas.winfo_height()
+        self.indicator_radius = max(min(width, height) * 0.1, 60)
+        self.canvas.delete("all")
+        if self.tk_img:
+            self.canvas.create_image(0, 0, anchor="nw", image=self.tk_img)
+        self.draw_vor_station()
+        self.draw_airplane(self.air_x_val, self.air_y_val, self.airplane_angle)
+        self.create_output_labels()
+        self.create_indicators()
+        self.update_vor_output()
+
+
+    def on_canvas_resize(self, event):
+        self.redraw_all()
+
+
 
     def reset_simulation(self):
         """Reset simulation to initial state."""
@@ -479,6 +548,22 @@ class VORSimulatorGUI:
         reciprocal_angle = (obs_angle + 180) % 360
         draw_single_cone(reciprocal_angle, center_color="blue", side_color="green", cone_type="reciprocal")
 
+    def get_indicator_positions(self):
+        width = self.canvas.winfo_width()
+        height = self.canvas.winfo_height()
+        margin = max(min(width, height) * 0.04, 20)
+        radius = self.indicator_radius
+
+        # Three meters, fixed at bottom left, with responsive spacing
+        x0 = margin + radius      # HDG
+        x1 = x0 + radius * 2.3    # CDI (space by 2.3 radii, adjust as needed)
+        x2 = x1 + radius * 2.3    # OBS
+
+        y = height - margin - radius  # Always near the bottom edge
+
+        return [x0, x1, x2], y
+
+
 
     
     def load_airplane_image(self):
@@ -504,46 +589,104 @@ class VORSimulatorGUI:
         return img
 
     def create_output_labels(self):
-        """Creates the text display area for VOR data."""
-        self.result_bg = self.canvas.create_rectangle(
-            1300, 0, 2200, 130, fill="white", outline="black"
-        )
-        self.result_text = self.canvas.create_text(
-            1490, 10, anchor="ne", text="VOR Simulator Ready",
-            font=("Arial", 10, "bold"), fill="black"
-        )
+        # Remove existing panel items
+        if hasattr(self, 'vor_output_panel_items'):
+            for item in self.vor_output_panel_items:
+                self.canvas.delete(item)
+        self.vor_output_panel_items = []
+        if hasattr(self, 'vor_show_tab') and self.vor_show_tab:
+            self.canvas.delete(self.vor_show_tab)
+            self.vor_show_tab = None
+
+        width = self.canvas.winfo_width()
+        height = self.canvas.winfo_height()
+        # Responsive placement: panel in upper right, margin from edges
+        margin = 20
+        panel_width = int(0.27 * width)
+        panel_height = int(0.17 * height)
+        x1 = width - panel_width - margin
+        y1 = margin
+        x2 = width - margin
+        y2 = margin + panel_height
+
+        self.vor_output_panel_geom = (x1, y1, x2, y2)  # For redrawing/resizing
+
+        if getattr(self, 'vor_output_visible', True):
+            # Main panel
+            panel_bg = self.canvas.create_rectangle(
+                x1, y1, x2, y2, fill="white", outline="black", width=2
+            )
+            # "Hide" button on left edge, vertical
+            hide_btn = self.canvas.create_rectangle(
+                x1-35, y1, x1, y1+60, fill="#ffd4d4", outline="black"
+            )
+            hide_text = self.canvas.create_text(
+                x1-18, y1+30, text="Hide", angle=90,
+                font=("Arial", 12, "bold"), fill="red"
+            )
+            # Result text area
+            result_text = self.canvas.create_text(
+                x1+20, y1+15, anchor="nw", text="VOR Simulator Ready",
+                font=("Arial", 10, "bold"), fill="black", width=(x2-x1-25)
+            )
+            self.result_text = result_text  # for dynamic updating
+            self.vor_output_panel_items = [panel_bg, hide_btn, hide_text, result_text]
+            self.vor_output_hide_area = (x1-35, y1, x1, y1+60)
+        else:
+            # "Show" tab, green, right edge
+            tab_width = 45
+            tab_height = 80
+            tab_x1 = width - tab_width - 10
+            tab_x2 = width - 10
+            tab_y1 = margin
+            tab_y2 = margin + tab_height
+            self.vor_show_tab = self.canvas.create_rectangle(
+                tab_x1, tab_y1, tab_x2, tab_y2, fill="#bbffbb", outline="black"
+            )
+            show_text = self.canvas.create_text(
+                tab_x1 + tab_width // 2, tab_y1 + tab_height // 2,
+                text="Show", angle=90, font=("Arial", 12, "bold"), fill="green"
+            )
+            self.vor_output_panel_items = [self.vor_show_tab, show_text]
+            self.vor_output_show_area = (tab_x1, tab_y1, tab_x2, tab_y2)
+
 
     def create_indicators(self):
         """Create all circular indicators with the same size."""
-        self.indicator_radius = 80
+        #self.indicator_radius = 80
         self.create_heading_indicator()
         self.create_cdi_indicator()
         self.create_obs_indicator()
 
     def create_heading_indicator(self):
-        """Create the heading indicator (leftmost) with rotating compass rose."""
-        x, y = 100, 580
+        xs, y = self.get_indicator_positions()
+        x = xs[0]
         radius = self.indicator_radius
-        
-        # Create outer and inner circles (these stay fixed)
-        self.canvas.create_oval(x-radius, y-radius, x+radius, y+radius, fill="white", outline="black", width=3)
-        self.canvas.create_oval(x-radius+10, y-radius+10, x+radius-10, y+radius-10, fill="#f8f8f8", outline="gray", width=1)
-        
-        # Store compass rose elements for rotation (these will move)
+
+        # Outer circles
+        self.canvas.create_oval(x - radius, y - radius, x + radius, y + radius, fill="white", outline="black", width=3)
+        self.canvas.create_oval(x - radius + radius*0.125, y - radius + radius*0.125, x + radius - radius*0.125, y + radius - radius*0.125, fill="#f8f8f8", outline="gray", width=1)
+
+        # Compass rose (tick marks and text, rotates with heading)
         self.compass_rose_elements = []
-        
-        # Create initial compass rose markings
         self.create_compass_rose_markings(x, y, radius, 0)
-        
-        # Create fixed heading needle (this stays pointing up - aircraft's perspective)
-        self.hdg_needle = self.canvas.create_line(x, y, x, y-50, fill="red", width=3, arrow=tk.LAST)
-        # Create fixed center dot
-        self.canvas.create_oval(x-3, y-3, x+3, y+3, fill="black")
-        # Create fixed heading reference triangle at top
-        self.canvas.create_polygon(x-5, y-radius+5, x+5, y-radius+5, x, y-radius-5, 
-                                  fill="yellow", outline="black", width=1)
-        
-        self.canvas.create_text(x, y+radius+20, text="HDG Indicator", font=("Arial", 12, "bold"), fill="darkblue")
+
+        # Heading needle (always points up)
+        self.hdg_needle = self.canvas.create_line(x, y, x, y - radius * 0.62, fill="red", width=3, arrow=tk.LAST)
+        # Center dot
+        self.canvas.create_oval(x - radius*0.025, y - radius*0.025, x + radius*0.025, y + radius*0.025, fill="black")
+        # Yellow triangle at the top
+        self.canvas.create_polygon(
+            x - radius*0.035, y - radius + radius*0.035,
+            x + radius*0.035, y - radius + radius*0.035,
+            x, y - radius - radius*0.035,
+            fill="yellow", outline="black", width=1
+        )
+        # Label
+        self.canvas.create_text(x, y + radius + 0.22 * radius, text="HDG Indicator", font=("Arial", int(radius * 0.15), "bold"), fill="darkblue")
+
+
+
 
     def create_compass_rose_markings(self, x, y, radius, rotation_offset):
         """Create or update compass rose markings with rotation offset."""
@@ -588,72 +731,76 @@ class VORSimulatorGUI:
                 self.compass_rose_elements.append(degree_label)
 
     def create_cdi_indicator(self):
-        """Create the HSI/CDI indicator (center)."""
-        x, y = 300, 580
+        xs, y = self.get_indicator_positions()
+        x = xs[1]
         radius = self.indicator_radius
-        
-        self.canvas.create_oval(x-radius, y-radius, x+radius, y+radius, fill="black", outline="white", width=3)
-        self.canvas.create_oval(x-radius+10, y-radius+10, x+radius-10, y+radius-10, fill="#1a1a1a", outline="gray", width=1)
-        
-        self.canvas.create_line(x, y-radius+20, x, y+radius-20, fill="white", width=2)
-        self.canvas.create_line(x-radius+20, y, x+radius-20, y, fill="white", width=2)
-        
+
+        # Main circles
+        self.canvas.create_oval(x - radius, y - radius, x + radius, y + radius, fill="black", outline="white", width=3)
+        self.canvas.create_oval(x - radius + radius*0.125, y - radius + radius*0.125, x + radius - radius*0.125, y + radius - radius*0.125, fill="#1a1a1a", outline="gray", width=1)
+
+        # Vertical and horizontal lines
+        self.canvas.create_line(x, y - radius * 0.75, x, y + radius * 0.75, fill="white", width=2)
+        self.canvas.create_line(x - radius * 0.75, y, x + radius * 0.75, y, fill="white", width=2)
+
+        # Dots (deviation marks)
         for i in range(-2, 3):
             if i != 0:
-                dot_x = x + i * 25
-                self.canvas.create_oval(dot_x-4, y-4, dot_x+4, y+4, fill="white", outline="white")
-        
-        self.cdi_needle = self.canvas.create_line(x, y-50, x, y+50, fill="yellow", width=5)
-        self.to_from_indicator = self.canvas.create_polygon(x-10, y-65, x+10, y-65, x, y-45, fill="white", outline="white")
-        
-        self.canvas.create_oval(x-3, y-3, x+3, y+3, fill="yellow")
-        self.canvas.create_text(x, y+radius+20, text="HSI Indicator", font=("Arial", 12, "bold"), fill="darkblue")
+                dot_x = x + i * (radius * 0.31)
+                self.canvas.create_oval(dot_x - radius*0.05, y - radius*0.05, dot_x + radius*0.05, y + radius*0.05, fill="white", outline="white")
+
+        # CDI needle (vertical line)
+        max_dev = radius * 0.62
+        self.cdi_needle = self.canvas.create_line(x, y - max_dev, x, y + max_dev, fill="yellow", width=5)
+
+        # TO/FROM triangle indicator (position will be updated in update_cdi_indicator)
+        self.to_from_indicator = self.canvas.create_polygon(
+            x - radius*0.13, y - 0.8 * radius, x + radius*0.13, y - 0.8 * radius, x, y - 0.56 * radius,
+            fill="white", outline="white"
+        )
+
+        # Center dot
+        self.canvas.create_oval(x - radius*0.037, y - radius*0.037, x + radius*0.037, y + radius*0.037, fill="yellow")
+        # Label
+        self.canvas.create_text(x, y + radius + 0.22 * radius, text="HSI Indicator", font=("Arial", int(radius * 0.15), "bold"), fill="darkblue")
+
+
+
 
     def create_obs_indicator(self):
-        """Create the OBS indicator (rightmost) based on real VOR instrument design."""
-        x, y = 500, 580
-        # RESIZE PARAMETER: Increase radius to make OBS indicator larger for better curved range display
-        radius = self.indicator_radius + 15  # Add 15 pixels to standard radius for better fit
+        xs, y = self.get_indicator_positions()
+        x = xs[2]
+        radius = self.indicator_radius
 
-        # Create main BLACK face with white border (like real VOR instrument)
-        self.canvas.create_oval(x-radius, y-radius, x+radius, y+radius, fill="black", outline="white", width=3)
-        self.canvas.create_oval(x-radius+5, y-radius+5, x+radius-5, y+radius-5, fill="black", outline="gray", width=1)
+        # Main black face with white border
+        self.canvas.create_oval(x - radius, y - radius, x + radius, y + radius, fill="black", outline="white", width=3)
+        self.canvas.create_oval(x - radius + radius*0.06, y - radius + radius*0.06, x + radius - radius*0.06, y + radius - radius*0.06, fill="black", outline="gray", width=1)
 
-        # Store OBS rose elements for rotation
+        # Compass rose (tick marks and numbers), rotates with OBS
         self.obs_rose_elements = []
-
-        # Create initial OBS markings
         self.create_obs_rose_markings(x, y, radius, 0)
 
-        # Create fixed reference triangle at top (12 o'clock position) - WHITE on black background
-        self.canvas.create_polygon(x-6, y-radius+8, x+6, y-radius+8, x, y-radius-2, 
-                                  fill="white", outline="white", width=2)
+        # Top reference triangle (12 o'clock)
+        self.canvas.create_polygon(x - radius*0.07, y - radius + radius*0.09, x + radius*0.07, y - radius + radius*0.09, x, y - radius*0.03, fill="white", outline="white", width=2)
 
-        # RESIZE PARAMETERS: Curved dotted deviation scale settings
-        arc_radius = 40  # RESIZE: Radius of the arc (increase for wider arc)
-        arc_angle_range = 60  # RESIZE: Total angle range in degrees (e.g. 60 for 60° arc)
-        arc_center_angle = 270  # RESIZE: 90=upward, 270=downward, 0=right, 180=left
-        num_dots = 7  # RESIZE: Number of dots along the arc (more dots = smoother curve)
-
-        # Calculate arc center (centered horizontally, below the indicator center)
-        arc_cx, arc_cy = x, y
-        arc_start_angle = arc_center_angle - arc_angle_range/2
-        arc_end_angle = arc_center_angle + arc_angle_range/2
-
+        # Curved dotted deviation scale (responsive)
+        arc_radius = radius * 0.5
+        arc_angle_range = 60
+        arc_center_angle = 270
+        num_dots = 7
+        arc_start_angle = arc_center_angle - arc_angle_range / 2
+        arc_end_angle = arc_center_angle + arc_angle_range / 2
         import math
-        # Draw upward arc of dots
         for i in range(num_dots):
-            angle_deg = arc_start_angle + (i / (num_dots-1)) * (arc_end_angle - arc_start_angle)
+            angle_deg = arc_start_angle + (i / (num_dots - 1)) * (arc_end_angle - arc_start_angle)
             angle_rad = math.radians(angle_deg)
-            dot_x = arc_cx + arc_radius * math.cos(angle_rad)
-            dot_y = arc_cy - arc_radius * math.sin(angle_rad)
-            self.canvas.create_oval(dot_x-2, dot_y-2, dot_x+2, dot_y+2, fill="white", outline="white")
+            dot_x = x + arc_radius * math.cos(angle_rad)
+            dot_y = y - arc_radius * math.sin(angle_rad)
+            self.canvas.create_oval(dot_x - radius*0.025, dot_y - radius*0.025, dot_x + radius*0.025, dot_y + radius*0.025, fill="white", outline="white")
 
-        # RESIZE PARAMETERS: Arrow settings
-        arrow_width = 5     # RESIZE: Width of the arrow tip
-        arrow_height = 8    # RESIZE: Height of the arrow tip
-
-        # Store for CDI calculations
+        # Arrow settings (responsive)
+        arrow_width = radius * 0.06
+        arrow_height = radius * 0.10
         self.obs_center_x = x
         self.obs_center_y = y
         self.obs_arc_radius = arc_radius
@@ -663,143 +810,101 @@ class VORSimulatorGUI:
         self.obs_arrow_width = arrow_width
         self.obs_arrow_height = arrow_height
 
-        # Create the MOVING CDI needle with arrow that always starts at center and points to arc
-        # Initialize at center position (center to middle of arc)
+        # Initial CDI needle and arrowhead (center to middle of arc)
         mid_angle_rad = math.radians(arc_center_angle)
         tip_x = x + arc_radius * math.cos(mid_angle_rad)
         tip_y = y - arc_radius * math.sin(mid_angle_rad)
-        self.obs_cdi_needle = self.canvas.create_line(x, y, tip_x, tip_y, fill="yellow", width=4)
-        # Arrowhead at tip
-        perp_angle = mid_angle_rad + math.pi/2
+        self.obs_cdi_needle = self.canvas.create_line(x, y, tip_x, tip_y, fill="yellow", width=int(radius*0.06))
+        perp_angle = mid_angle_rad + math.pi / 2
         left_x = tip_x + arrow_width * math.cos(perp_angle)
         left_y = tip_y - arrow_width * math.sin(perp_angle)
         right_x = tip_x - arrow_width * math.cos(perp_angle)
         right_y = tip_y + arrow_width * math.sin(perp_angle)
         arrow_tip_x = tip_x + arrow_height * math.cos(mid_angle_rad)
         arrow_tip_y = tip_y - arrow_height * math.sin(mid_angle_rad)
-        self.obs_cdi_arrow = self.canvas.create_polygon(
-            left_x, left_y,
-            right_x, right_y,
-            arrow_tip_x, arrow_tip_y,
-            fill="yellow", outline="yellow")
-        
-        # Create center dot
-        self.canvas.create_oval(x-2, y-2, x+2, y+2, fill="white")
-    
-        
-        # Add current OBS setting display at bottom - WHITE text
-        self.obs_setting_display = self.canvas.create_text(x, y+radius+15, text="000°", 
-                                                          font=("Arial", 12, "bold"), fill="darkblue")
-        
-        self.canvas.create_text(x, y+radius+35, text="OBS Indicator", font=("Arial", 12, "bold"), fill="darkblue")
+        self.obs_cdi_arrow = self.canvas.create_polygon(left_x, left_y, right_x, right_y, arrow_tip_x, arrow_tip_y, fill="yellow", outline="yellow")
+
+        # Center dot and labels
+        self.canvas.create_oval(x - radius*0.03, y - radius*0.03, x + radius*0.03, y + radius*0.03, fill="white")
+        self.obs_setting_display = self.canvas.create_text(x, y + radius + 0.18 * radius, text="000°", font=("Arial", int(radius * 0.14), "bold"), fill="darkblue")
+        self.canvas.create_text(x, y + radius + 0.34 * radius, text="OBS Indicator", font=("Arial", int(radius * 0.13), "bold"), fill="darkblue")
 
     def create_obs_rose_markings(self, x, y, radius, rotation_offset):
-        """Create or update OBS rose markings with rotation offset."""
-        # Clear existing OBS rose elements
+        # Responsive OBS rose: all elements scale and position with the parent
         for element in self.obs_rose_elements:
             self.canvas.delete(element)
         self.obs_rose_elements.clear()
-        
-        # Create tick marks and numbers around the compass rose
         for angle in range(0, 360, 10):
-            # Apply rotation offset to make OBS rose rotate
             display_angle = (angle - rotation_offset) % 360
             angle_rad = radians(display_angle)
-            
-            # Create different tick sizes for different increments
-            if angle % 30 == 0:  # Major ticks every 30 degrees
-                inner_radius = radius - 25
-                outer_radius = radius - 8
+            if angle % 30 == 0:
+                inner_radius = radius - radius * 0.32
+                outer_radius = radius - radius * 0.1
                 tick_width = 2
-            else:  # Minor ticks every 10 degrees
-                inner_radius = radius - 18
-                outer_radius = radius - 8
+            else:
+                inner_radius = radius - radius * 0.21
+                outer_radius = radius - radius * 0.1
                 tick_width = 1
-            
             start_x = x + inner_radius * sin(angle_rad)
             start_y = y - inner_radius * cos(angle_rad)
             end_x = x + outer_radius * sin(angle_rad)
             end_y = y - outer_radius * cos(angle_rad)
-            
-            # Create tick mark
-            tick = self.canvas.create_line(start_x, start_y, end_x, end_y, 
-                                         width=tick_width, fill="white")
+            tick = self.canvas.create_line(start_x, start_y, end_x, end_y, width=tick_width, fill="white")
             self.obs_rose_elements.append(tick)
-            
-            # Add numbers every 30 degrees (like real VOR instrument)
             if angle % 30 == 0:
-                text_radius = radius - 35
+                text_radius = radius - radius * 0.41
                 text_x = x + text_radius * sin(angle_rad)
                 text_y = y - text_radius * cos(angle_rad)
-                
-                # Format numbers like real VOR (display actual heading degrees)
                 heading_number = angle
-                if heading_number == 0:
-                    number_text = "36"  # 360 degrees shown as 36
-                else:
-                    number_text = f"{heading_number // 10:02d}"  # Two digits (03, 06, 09, etc.)
-                
-                number_label = self.canvas.create_text(text_x, text_y, text=number_text, 
-                                                      font=("Arial", 10, "bold"), fill="white")
+                number_text = "36" if heading_number == 0 else f"{heading_number // 10:02d}"
+                number_label = self.canvas.create_text(text_x, text_y, text=number_text, font=("Arial", int(radius*0.13)), fill="white")
                 self.obs_rose_elements.append(number_label)
-        
-        # Add cardinal directions at key positions (like real VOR)
-        cardinal_positions = [
-            (0, "N"), (90, "E"), (180, "S"), (270, "W")
-        ]
-        
-        for cardinal_angle, cardinal_text in cardinal_positions:
+        for cardinal_angle, cardinal_text in [(0, "N"), (90, "E"), (180, "S"), (270, "W")]:
             display_angle = (cardinal_angle - rotation_offset) % 360
             angle_rad = radians(display_angle)
-            text_radius = radius - 50
+            text_radius = radius - radius * 0.56
             text_x = x + text_radius * sin(angle_rad)
             text_y = y - text_radius * cos(angle_rad)
-            
-            cardinal_label = self.canvas.create_text(text_x, text_y, text=cardinal_text, 
-                                                   font=("Arial", 10, "bold"), fill="white")
+            cardinal_label = self.canvas.create_text(text_x, text_y, text=cardinal_text, font=("Arial", int(radius*0.11), "bold"), fill="white")
             self.obs_rose_elements.append(cardinal_label)
 
-    def update_heading_indicator(self, heading):
-        """Update heading indicator by rotating the compass rose, not the needle."""
-        x, y = 100, 580
+    def update_heading_indicator(self, hdg):
+        # Redraw the compass rose and rotate it based on current heading
+        xs, y = self.get_indicator_positions()
+        x = xs[0]
         radius = self.indicator_radius
-        
-        # Recreate compass rose markings with rotation based on aircraft heading
-        # The compass rose rotates opposite to aircraft heading so the needle appears to point to correct heading
-        self.create_compass_rose_markings(x, y, radius, heading)
-        
-        # The needle stays fixed pointing up (representing aircraft's nose direction)
-        # No need to update needle position as it represents the aircraft's reference
+        self.create_compass_rose_markings(x, y, radius, hdg)  # Rotate rose
+        # The heading needle (self.hdg_needle) always points up, so nothing more is needed.
 
-    def update_cdi_indicator(self, obs_angle, bearing_to_vor, to_from):
-        """Update CDI needle and TO/FROM indicator based on VOR data."""
-        x, y = 300, 585
+    def update_cdi_indicator(self, obs_angle, bearing_to_vor, direction):
+        # Move the CDI needle and TO/FROM indicator
+        xs, y = self.get_indicator_positions()
+        x = xs[1]
+        radius = self.indicator_radius
         deflection = calculate_cdi_deflection(obs_angle, bearing_to_vor)
-        
-        # Horizontal movement of the CDI needle
-        needle_x = x + (deflection * 5)
-        needle_x = max(x - 50, min(x + 50, needle_x))
-        self.canvas.coords(self.cdi_needle, needle_x, y - 50, needle_x, y + 50)
-        
-        # Update TO/FROM indicator
-        if to_from == "TO":
-            self.canvas.coords(self.to_from_indicator, x - 10, y - 65, x + 10, y - 65, x, y - 45)
-            self.canvas.itemconfig(self.to_from_indicator, fill="green")
+        max_dev = radius * 0.62
+        # Map -10...0...+10 to -max_dev...0...+max_dev
+        offset = max(-10, min(10, deflection)) / 10.0 * max_dev
+        self.canvas.coords(self.cdi_needle, x + offset, y - max_dev, x + offset, y + max_dev)
+        # Move the TO/FROM triangle above/below the gauge based on direction
+        if direction == "TO":
+            tri_y = y - 0.8 * radius
         else:
-            self.canvas.coords(self.to_from_indicator, x - 10, y + 65, x + 10, y + 65, x, y + 45)
-            self.canvas.itemconfig(self.to_from_indicator, fill="red")
+            tri_y = y + 0.8 * radius
+        # Keep the triangle horizontal
+        self.canvas.coords(self.to_from_indicator,
+                        x - radius*0.13, tri_y,
+                        x + radius*0.13, tri_y,
+                        x, tri_y + (0.24 * radius if direction == "TO" else -0.24 * radius))
+
 
     def update_obs_indicator(self, obs_angle):
-        """Update the OBS indicator: rotate the compass rose and move CDI needle for course deviation."""
-        x, y = 500, 580
+        xs, y = self.get_indicator_positions()
+        x = xs[2]
         radius = self.indicator_radius
-        
-        # Rotate the OBS compass rose to show the selected OBS setting
-        # The compass markings rotate, the reference triangle at top stays fixed
         self.create_obs_rose_markings(x, y, radius, obs_angle)
-        
-        # Update the digital display of current OBS setting
         self.canvas.itemconfig(self.obs_setting_display, text=f"{int(obs_angle):03d}°")
+
 
     def update_obs_cdi_needle(self, obs_angle, bearing_to_vor):
         """Update the CDI needle position in the OBS indicator based on course deviation."""
@@ -972,7 +1077,7 @@ class VORSimulatorGUI:
         self.root.after(50, self.movement_loop)
 
     def update_vor_output(self):
-        """Update all VOR-related displays and indicators."""
+        """Update all VOR-related displays and indicators, including responsive OBS meter."""
         try:
             ax = self.air_x_val
             ay = self.air_y_val
@@ -988,24 +1093,26 @@ class VORSimulatorGUI:
             self.draw_triangular_gradient(obs)
 
             radial_from_vor = (bearing_to_vor + 180) % 360
-            
             result = (f"Distance: {distance:.1f} NM\n"
-                      f"Bearing to VOR: {bearing_to_vor:.1f}\u00b0\n"
-                      f"Radial from VOR: {radial_from_vor:.1f}\u00b0\n"
-                      f"OBS Setting: {obs:.1f}\u00b0\n"
-                      f"TO/FROM: {direction}\n"
-                      f"HSI Deflection: {cdi_deflection:.1f} dots\n"
-                      f"Current HDG: {hdg:.1f}\u00b0")
-            
-            self.canvas.itemconfig(self.result_text, text=result)
-            
+                    f"Bearing to VOR: {bearing_to_vor:.1f}\u00b0\n"
+                    f"Radial from VOR: {radial_from_vor:.1f}\u00b0\n"
+                    f"OBS Setting: {obs:.1f}\u00b0\n"
+                    f"TO/FROM: {direction}\n"
+                    f"HSI Deflection: {cdi_deflection:.1f} dots\n"
+                    f"Current HDG: {hdg:.1f}\u00b0")
+            # Only update the text if panel is visible and result_text exists
+            if getattr(self, 'vor_output_visible', True) and hasattr(self, 'result_text'):
+                self.canvas.itemconfig(self.result_text, text=result)
+
             self.update_heading_indicator(hdg)
             self.update_cdi_indicator(obs, bearing_to_vor, direction)
             self.update_obs_indicator(obs)
-            self.update_obs_cdi_needle(obs, bearing_to_vor)  # Update OBS CDI needle position
-            
+            self.update_obs_cdi_needle(obs, bearing_to_vor)
         except Exception as e:
-            self.canvas.itemconfig(self.result_text, text=f"Error: {str(e)}")
+            # Only update error if panel is visible and result_text exists
+            if getattr(self, 'vor_output_visible', True) and hasattr(self, 'result_text'):
+                self.canvas.itemconfig(self.result_text, text=f"Error: {str(e)}")
+
 
 # --- Run ---
 if __name__ == "__main__":
