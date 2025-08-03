@@ -221,6 +221,12 @@ class VORSimulatorGUI:
         tk.Checkbutton(display_frame, text="Show Radial Labels", variable=self.labels_var, 
                       bg="#d0d0d0", command=self.toggle_labels).pack(side=tk.TOP, anchor=tk.W)
         
+        # Compass Launch Button
+        compass_frame = tk.Frame(control_frame, bg="#d0d0d0")
+        compass_frame.pack(side=tk.LEFT, padx=20, pady=5)
+        tk.Label(compass_frame, text="Compass:", bg="#d0d0d0", font=("Arial", 10, "bold")).pack(side=tk.TOP)
+        tk.Button(compass_frame, text="Open Compass Window", command=self.launch_compass_window, bg="#ffe066", font=("Arial", 10, "bold"), width=18).pack(side=tk.TOP, pady=2)
+
         # Control Methods Info
         control_info_frame = tk.Frame(control_frame, bg="#d0d0d0")
         control_info_frame.pack(side=tk.LEFT, padx=20, pady=5)
@@ -242,6 +248,20 @@ class VORSimulatorGUI:
         reset_frame.pack(side=tk.RIGHT, padx=20, pady=5)
         tk.Button(reset_frame, text="Reset Simulation", command=self.reset_simulation, 
                   bg="#ff9090", font=("Arial", 10, "bold"), width=15).pack(side=tk.TOP, pady=5)
+
+    def launch_compass_window(self):
+        """Launch compass.py as a separate Pygame window."""
+        import subprocess
+        import sys
+        import os
+        script_path = os.path.join(os.path.dirname(__file__), "compass.py")
+        if os.path.exists(script_path):
+            try:
+                subprocess.Popen([sys.executable, script_path])
+            except Exception as e:
+                print(f"Failed to launch compass.py: {e}")
+        else:
+            print("compass.py not found in the current directory.")
 
     def set_speed(self, val):
         """Set aircraft speed from the slider."""
@@ -592,33 +612,82 @@ class VORSimulatorGUI:
     def create_obs_indicator(self):
         """Create the OBS indicator (rightmost) based on real VOR instrument design."""
         x, y = 500, 580
-        radius = self.indicator_radius
-        
-        # Create main white face with black border (like real VOR instrument)
-        self.canvas.create_oval(x-radius, y-radius, x+radius, y+radius, fill="white", outline="black", width=3)
-        self.canvas.create_oval(x-radius+5, y-radius+5, x+radius-5, y+radius-5, fill="white", outline="gray", width=1)
-        
+        # RESIZE PARAMETER: Increase radius to make OBS indicator larger for better curved range display
+        radius = self.indicator_radius + 15  # Add 15 pixels to standard radius for better fit
+
+        # Create main BLACK face with white border (like real VOR instrument)
+        self.canvas.create_oval(x-radius, y-radius, x+radius, y+radius, fill="black", outline="white", width=3)
+        self.canvas.create_oval(x-radius+5, y-radius+5, x+radius-5, y+radius-5, fill="black", outline="gray", width=1)
+
         # Store OBS rose elements for rotation
         self.obs_rose_elements = []
-        
+
         # Create initial OBS markings
         self.create_obs_rose_markings(x, y, radius, 0)
-        
-        # Create OBS arrow that points to bottom (6 o'clock position) - this stays fixed
-        # The arrow points down to show the selected OBS setting on the bottom scale
-        arrow_start_y = y + 10
-        arrow_end_y = y + radius - 15
-        self.obs_needle = self.canvas.create_line(x, arrow_start_y, x, arrow_end_y, 
-                                                 fill="red", width=4, arrow=tk.LAST, 
-                                                 arrowshape=(8, 10, 3))
+
+        # Create fixed reference triangle at top (12 o'clock position) - WHITE on black background
+        self.canvas.create_polygon(x-6, y-radius+8, x+6, y-radius+8, x, y-radius-2, 
+                                  fill="white", outline="white", width=2)
+
+        # RESIZE PARAMETERS: Curved dotted deviation scale settings
+        arc_radius = 40  # RESIZE: Radius of the arc (increase for wider arc)
+        arc_angle_range = 60  # RESIZE: Total angle range in degrees (e.g. 60 for 60° arc)
+        arc_center_angle = 270  # RESIZE: 90=upward, 270=downward, 0=right, 180=left
+        num_dots = 7  # RESIZE: Number of dots along the arc (more dots = smoother curve)
+
+        # Calculate arc center (centered horizontally, below the indicator center)
+        arc_cx, arc_cy = x, y
+        arc_start_angle = arc_center_angle - arc_angle_range/2
+        arc_end_angle = arc_center_angle + arc_angle_range/2
+
+        import math
+        # Draw upward arc of dots
+        for i in range(num_dots):
+            angle_deg = arc_start_angle + (i / (num_dots-1)) * (arc_end_angle - arc_start_angle)
+            angle_rad = math.radians(angle_deg)
+            dot_x = arc_cx + arc_radius * math.cos(angle_rad)
+            dot_y = arc_cy - arc_radius * math.sin(angle_rad)
+            self.canvas.create_oval(dot_x-2, dot_y-2, dot_x+2, dot_y+2, fill="white", outline="white")
+
+        # RESIZE PARAMETERS: Arrow settings
+        arrow_width = 5     # RESIZE: Width of the arrow tip
+        arrow_height = 8    # RESIZE: Height of the arrow tip
+
+        # Store for CDI calculations
+        self.obs_center_x = x
+        self.obs_center_y = y
+        self.obs_arc_radius = arc_radius
+        self.obs_arc_center_angle = arc_center_angle
+        self.obs_arc_angle_range = arc_angle_range
+        self.obs_num_dots = num_dots
+        self.obs_arrow_width = arrow_width
+        self.obs_arrow_height = arrow_height
+
+        # Create the MOVING CDI needle with arrow that always starts at center and points to arc
+        # Initialize at center position (center to middle of arc)
+        mid_angle_rad = math.radians(arc_center_angle)
+        tip_x = x + arc_radius * math.cos(mid_angle_rad)
+        tip_y = y - arc_radius * math.sin(mid_angle_rad)
+        self.obs_cdi_needle = self.canvas.create_line(x, y, tip_x, tip_y, fill="yellow", width=4)
+        # Arrowhead at tip
+        perp_angle = mid_angle_rad + math.pi/2
+        left_x = tip_x + arrow_width * math.cos(perp_angle)
+        left_y = tip_y - arrow_width * math.sin(perp_angle)
+        right_x = tip_x - arrow_width * math.cos(perp_angle)
+        right_y = tip_y + arrow_width * math.sin(perp_angle)
+        arrow_tip_x = tip_x + arrow_height * math.cos(mid_angle_rad)
+        arrow_tip_y = tip_y - arrow_height * math.sin(mid_angle_rad)
+        self.obs_cdi_arrow = self.canvas.create_polygon(
+            left_x, left_y,
+            right_x, right_y,
+            arrow_tip_x, arrow_tip_y,
+            fill="yellow", outline="yellow")
         
         # Create center dot
-        self.canvas.create_oval(x-3, y-3, x+3, y+3, fill="black")
+        self.canvas.create_oval(x-2, y-2, x+2, y+2, fill="white")
+    
         
-        # Add "OBS" label at the top of the indicator
-        self.canvas.create_text(x, y-radius-15, text="OBS", font=("Arial", 10, "bold"), fill="black")
-        
-        # Add current OBS setting display at bottom
+        # Add current OBS setting display at bottom - WHITE text
         self.obs_setting_display = self.canvas.create_text(x, y+radius+15, text="000°", 
                                                           font=("Arial", 12, "bold"), fill="darkblue")
         
@@ -654,7 +723,7 @@ class VORSimulatorGUI:
             
             # Create tick mark
             tick = self.canvas.create_line(start_x, start_y, end_x, end_y, 
-                                         width=tick_width, fill="black")
+                                         width=tick_width, fill="white")
             self.obs_rose_elements.append(tick)
             
             # Add numbers every 30 degrees (like real VOR instrument)
@@ -663,14 +732,15 @@ class VORSimulatorGUI:
                 text_x = x + text_radius * sin(angle_rad)
                 text_y = y - text_radius * cos(angle_rad)
                 
-                # Format numbers like real VOR (0, 3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33)
-                if angle == 0:
-                    number_text = "36"
+                # Format numbers like real VOR (display actual heading degrees)
+                heading_number = angle
+                if heading_number == 0:
+                    number_text = "36"  # 360 degrees shown as 36
                 else:
-                    number_text = str(angle // 10).zfill(1)
+                    number_text = f"{heading_number // 10:02d}"  # Two digits (03, 06, 09, etc.)
                 
                 number_label = self.canvas.create_text(text_x, text_y, text=number_text, 
-                                                      font=("Arial", 12, "bold"), fill="black")
+                                                      font=("Arial", 10, "bold"), fill="white")
                 self.obs_rose_elements.append(number_label)
         
         # Add cardinal directions at key positions (like real VOR)
@@ -686,7 +756,7 @@ class VORSimulatorGUI:
             text_y = y - text_radius * cos(angle_rad)
             
             cardinal_label = self.canvas.create_text(text_x, text_y, text=cardinal_text, 
-                                                   font=("Arial", 10, "bold"), fill="black")
+                                                   font=("Arial", 10, "bold"), fill="white")
             self.obs_rose_elements.append(cardinal_label)
 
     def update_heading_indicator(self, heading):
@@ -720,16 +790,51 @@ class VORSimulatorGUI:
             self.canvas.itemconfig(self.to_from_indicator, fill="red")
 
     def update_obs_indicator(self, obs_angle):
-        """Update the OBS indicator by rotating the compass rose, arrow stays fixed pointing down."""
+        """Update the OBS indicator: rotate the compass rose and move CDI needle for course deviation."""
         x, y = 500, 580
         radius = self.indicator_radius
         
         # Rotate the OBS compass rose to show the selected OBS setting
-        # The arrow stays fixed pointing down (6 o'clock position)
+        # The compass markings rotate, the reference triangle at top stays fixed
         self.create_obs_rose_markings(x, y, radius, obs_angle)
         
         # Update the digital display of current OBS setting
         self.canvas.itemconfig(self.obs_setting_display, text=f"{int(obs_angle):03d}°")
+
+    def update_obs_cdi_needle(self, obs_angle, bearing_to_vor):
+        """Update the CDI needle position in the OBS indicator based on course deviation."""
+        import math
+        # Calculate course deviation (same as CDI deflection)
+        deflection = calculate_cdi_deflection(obs_angle, bearing_to_vor)
+        # Map deflection (-10 to +10) to arc angle
+        normalized_deflection = deflection / 10.0
+        normalized_deflection = max(-1.0, min(1.0, normalized_deflection))
+        # Arc parameters
+        arc_center_angle = self.obs_arc_center_angle
+        arc_angle_range = self.obs_arc_angle_range
+        arc_radius = self.obs_arc_radius
+        x, y = self.obs_center_x, self.obs_center_y
+        # Calculate angle for tip (like a clock hand)
+        angle_deg = arc_center_angle - (arc_angle_range/2) + (normalized_deflection + 1) * (arc_angle_range/2)
+        angle_rad = math.radians(angle_deg)
+        tip_x = x + arc_radius * math.cos(angle_rad)
+        tip_y = y - arc_radius * math.sin(angle_rad)
+        # Needle always from center to tip
+        self.canvas.coords(self.obs_cdi_needle, x, y, tip_x, tip_y)
+        # Arrowhead at tip
+        arrow_width = self.obs_arrow_width
+        arrow_height = self.obs_arrow_height
+        perp_angle = angle_rad + math.pi/2
+        left_x = tip_x + arrow_width * math.cos(perp_angle)
+        left_y = tip_y - arrow_width * math.sin(perp_angle)
+        right_x = tip_x - arrow_width * math.cos(perp_angle)
+        right_y = tip_y + arrow_width * math.sin(perp_angle)
+        arrow_tip_x = tip_x + arrow_height * math.cos(angle_rad)
+        arrow_tip_y = tip_y - arrow_height * math.sin(angle_rad)
+        self.canvas.coords(self.obs_cdi_arrow,
+                          left_x, left_y,
+                          right_x, right_y,
+                          arrow_tip_x, arrow_tip_y)
 
     def draw_airplane(self, x, y, angle):
         """Draw the airplane marker at its current position and heading."""
@@ -897,6 +1002,7 @@ class VORSimulatorGUI:
             self.update_heading_indicator(hdg)
             self.update_cdi_indicator(obs, bearing_to_vor, direction)
             self.update_obs_indicator(obs)
+            self.update_obs_cdi_needle(obs, bearing_to_vor)  # Update OBS CDI needle position
             
         except Exception as e:
             self.canvas.itemconfig(self.result_text, text=f"Error: {str(e)}")
