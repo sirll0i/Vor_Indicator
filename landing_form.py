@@ -271,19 +271,10 @@ class LandingForm:
             simulator_path = os.path.join(script_dir, "VOR_FINAL_UPDATED.py")
             
             if os.path.exists(simulator_path):
-                # Launch the simulator
-                subprocess.Popen([sys.executable, simulator_path])
-                
-                # Show confirmation message
-                messagebox.showinfo(
-                    "Simulator Launched", 
-                    "VOR Navigator Simulator has been launched successfully!\n\n"
-                    "The simulator window should open shortly."
-                )
-                
-                # Optionally close the landing form
-                # self.root.destroy()
-                
+                # Launch the simulator with a special argument so it knows it was started from the landing form
+                subprocess.Popen([sys.executable, simulator_path, "--from-landing-form"])
+                # Close the landing form window immediately after launching the simulator
+                self.root.destroy()
             else:
                 messagebox.showerror(
                     "File Not Found", 

@@ -949,8 +949,10 @@ class VORSimulatorGUI:
         
         spread_angle = 15  # half-width of the cone (15 degrees on each side)
 
-        def draw_single_cone(base_angle, center_color="red", side_color="green", cone_type="main"):
+
+        def draw_single_cone(base_angle, center_color="red", cone_type="main"):
             """Draw a single triangular cone representing a VOR radial sector"""
+            side_color = "green"  # Always green for both cones
             center_angle = radians(base_angle)
             left_angle = radians(base_angle - spread_angle)
             right_angle = radians(base_angle + spread_angle)
@@ -973,32 +975,23 @@ class VORSimulatorGUI:
             right_boundary = self.canvas.create_line(vx, vy, right_end_x, right_end_y,
                                                     fill=side_color, width=2, tags="triangular_gradient")
 
-            # Add flexible cone fill that extends to screen edges for better visualization
-            if cone_type == "main":
-                # Draw only the cone outline for the main cone (no fill)
-                cone_fill = self.canvas.create_polygon(
-                    vx, vy, left_end_x, left_end_y, right_end_x, right_end_y,
-                    fill="", outline=center_color, width=2, tags="triangular_gradient"
-                )
-                self.triangular_gradient.append(cone_fill)
-            else:
-                # Draw only the cone outline for the reciprocal cone (no fill)
-                cone_fill = self.canvas.create_polygon(
-                    vx, vy, left_end_x, left_end_y, right_end_x, right_end_y,
-                    fill="", outline=center_color, width=2, tags="triangular_gradient"
-                )
-                self.triangular_gradient.append(cone_fill)
+            # Draw only the cone outline (no fill), outline color is green
+            cone_fill = self.canvas.create_polygon(
+                vx, vy, left_end_x, left_end_y, right_end_x, right_end_y,
+                fill="", outline=side_color, width=2, tags="triangular_gradient"
+            )
+            self.triangular_gradient.append(cone_fill)
 
             # Store all cone elements for later deletion
             self.triangular_gradient.extend([center_line, left_boundary, right_boundary])
 
         # Draw main cone (current OBS setting) - represents the selected radial
-        draw_single_cone(obs_angle, center_color="red", side_color="green", cone_type="main")
+        draw_single_cone(obs_angle, center_color="red", cone_type="main")
 
         # Draw reciprocal cone (OBS + 180°) - represents the opposite radial
         # This creates symmetrical functionality for the other side of the VOR
         reciprocal_angle = (obs_angle + 180) % 360
-        draw_single_cone(reciprocal_angle, center_color="blue", side_color="green", cone_type="reciprocal")
+        draw_single_cone(reciprocal_angle, center_color="blue", cone_type="reciprocal")
 
     def get_indicator_positions(self):
         width = self.canvas.winfo_width()
@@ -1572,6 +1565,15 @@ class VORSimulatorGUI:
 
 # --- Run ---
 if __name__ == "__main__":
-    root = tk.Tk()
-    app = VORSimulatorGUI(root)
-    root.mainloop()
+    if "--from-landing-form" in sys.argv:
+        root = tk.Tk()
+        app = VORSimulatorGUI(root)
+        root.mainloop()
+    else:
+        root = tk.Tk()
+        root.withdraw()
+        messagebox.showerror(
+            "Start from Landing Form",
+            "Please start the VOR Navigation Simulator using the landing form (landing_form.py).\n\nDo not run this file directly."
+        )
+        root.destroy()
