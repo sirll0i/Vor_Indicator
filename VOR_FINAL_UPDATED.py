@@ -326,8 +326,14 @@ class VORSimulatorGUI:
         # --- Aircraft and VOR State ---
         self.air_x_val = 10   # grid units (0–100)
         self.air_y_val = 10
-        self.vor_x = 50 * 5   # grid units scaled for canvas
-        self.vor_y = 50 * 5
+        # VOR POSITION
+        self.vor1_x = 50 * 5   # Center-ish
+        self.vor1_y = 50 * 5
+
+        self.vor2_x = 241.0 * 5   # grid x to canvas x
+        self.vor2_y = 88.4 * 5    # grid y to canvas y
+
+        self.active_vor = 1    # 1 or 2, which VOR is used for CDI logic
         self.airplane_marker = None
         self.airplane_img = None
         self.airplane_angle = 0
@@ -514,11 +520,24 @@ class VORSimulatorGUI:
         tk.Label(control_info_frame, text=control_text, bg="#d0d0d0", 
                 font=("Arial", 8), justify=tk.LEFT).pack(side=tk.TOP, anchor=tk.W)
         
+        # --- VOR SELECTOR ---
+        vor_select_frame = tk.Frame(control_frame, bg="#d0d0d0")
+        vor_select_frame.pack(side=tk.LEFT, padx=20, pady=5)
+        tk.Label(vor_select_frame, text="Active VOR:", bg="#d0d0d0", font=("Arial", 10, "bold")).pack(side=tk.TOP)
+        self.active_vor_var = tk.IntVar(value=1)
+        tk.Radiobutton(vor_select_frame, text="VOR 1", variable=self.active_vor_var, value=1, command=self.set_active_vor, bg="#d0d0d0").pack(anchor=tk.W)
+        tk.Radiobutton(vor_select_frame, text="VOR 2", variable=self.active_vor_var, value=2, command=self.set_active_vor, bg="#d0d0d0").pack(anchor=tk.W)
+
+        
         # Reset Button
         reset_frame = tk.Frame(control_frame, bg="#d0d0d0")
         reset_frame.pack(side=tk.RIGHT, padx=20, pady=5)
         tk.Button(reset_frame, text="Reset Simulation", command=self.reset_simulation, 
                   bg="#ff9090", font=("Arial", 10, "bold"), width=15).pack(side=tk.TOP, pady=5)
+
+    def set_active_vor(self):
+        self.active_vor = self.active_vor_var.get()
+        self.redraw_all()
 
     def launch_compass_window(self):
         """Launch compass.py as a separate Pygame window."""
@@ -1057,7 +1076,11 @@ The browser version includes:
     def update_all_meters(self):
         ax = self.air_x_val
         ay = self.air_y_val
-        vx, vy = 50, 50
+        # Use ACTIVE VOR coordinates
+        if self.active_vor == 1:
+            vx, vy = self.vor1_x / 5, self.vor1_y / 5
+        else:
+            vx, vy = self.vor2_x / 5, self.vor2_y / 5
         obs = self.obs_angle
         hdg = self.airplane_angle % 360
         bearing_to_vor = calculate_bearing(ax, ay, vx, vy)
@@ -1068,29 +1091,46 @@ The browser version includes:
         self.update_obs_cdi_needle(obs, bearing_to_vor)
 
 
+
     def redraw_all(self, event=None):
+        """Redraw all main graphical elements, in the correct order."""
         width = self.canvas.winfo_width()
         height = self.canvas.winfo_height()
         self.indicator_radius = max(min(width, height) * 0.1, 60)
+
+        # Clear the canvas first
         self.canvas.delete("all")
-        # Draw the correct background
-        if hasattr(self, 'using_matplotlib_bg') and self.using_matplotlib_bg:
-            if hasattr(self, 'bg_photo') and self.bg_photo:
-                print("Drawing matplotlib background")
-                self.canvas.create_image(0, 0, anchor="nw", image=self.bg_photo, tags="background")
-            else:
-                print("Matplotlib background flag set but no bg_photo available")
+
+        # Draw background image or matplotlib background
+        if getattr(self, 'using_matplotlib_bg', False) and hasattr(self, 'bg_photo') and self.bg_photo:
+            self.canvas.create_image(0, 0, anchor="nw", image=self.bg_photo, tags="background")
         elif self.tk_img:
-            print("Drawing default background image")
             self.canvas.create_image(0, 0, anchor="nw", image=self.tk_img)
+
+        # Draw triangular gradient cones for the active VOR (***must be before airplane/markers***)
+        if self.active_vor == 1:
+            self.draw_triangular_gradient(self.obs_angle, self.vor1_x, self.vor1_y, color="red")
         else:
-            print("No background available")
+            self.draw_triangular_gradient(self.obs_angle, self.vor2_x, self.vor2_y, color="magenta")
+
+        # Draw both VOR stations (includes active VOR radials and labels)
         self.draw_vor_station()
+
+        # Draw the airplane at its current position
         self.draw_airplane(self.air_x_val, self.air_y_val, self.airplane_angle)
+
+        # Redraw panels and overlays
         self.create_output_labels()
         self.create_instruction_box()
+
+        # Redraw indicators/meters
         self.create_indicators()
+        self.update_all_meters()  # Keep needles/arrows up-to-date
+
+        # Update the VOR info panel and any dynamic overlays
         self.update_vor_output()
+
+
 
 
     def on_canvas_resize(self, event):
@@ -1106,165 +1146,151 @@ The browser version includes:
         self.obs_angle = 0
         self.speed = 0.5
         self.speed_scale.set(self.speed)
-        
+
+        # Get active VOR coordinates
+        if self.active_vor == 1:
+            active_x, active_y = self.vor1_x, self.vor1_y
+        else:
+            active_x, active_y = self.vor2_x, self.vor2_y
+
         self.draw_airplane(self.air_x_val, self.air_y_val, self.airplane_angle)
-        self.draw_radial_line(self.obs_angle)
+        self.draw_radial_line(self.obs_angle, active_x, active_y)
         self.update_vor_output()
         self.obs_value_label.config(text=f"{int(self.obs_angle):03d}\u00b0")
 
+
     def draw_vor_station(self):
-        """Draw VOR station at a fixed position on the map."""
-        vx, vy = self.vor_x, self.vor_y
-        
+        """Draw TWO VOR stations and the radials for the active VOR."""
         # Clear existing radials
         for radial in self.all_radials:
             self.canvas.delete(radial)
         self.all_radials.clear()
-        
-        # Draw VOR symbol
-        self.canvas.create_oval(vx-15, vy-15, vx+15, vy+15, 
-                                fill="blue", outline="darkblue", width=3)
-        self.canvas.create_text(vx, vy-25, text="VOR", 
-                                font=("Arial", 12, "bold"), fill="darkblue")
-        
-        # Draw radials if enabled
+
+        # Draw VOR 1 (blue)
+        self.canvas.create_oval(
+            self.vor1_x - 15, self.vor1_y - 15, self.vor1_x + 15, self.vor1_y + 15,
+            fill="blue", outline="darkblue", width=3
+        )
+        self.canvas.create_text(
+            self.vor1_x, self.vor1_y - 25,
+            text="VOR 1", font=("Arial", 12, "bold"), fill="darkblue"
+        )
+
+        # Draw VOR 2 (magenta)
+        self.canvas.create_oval(
+            self.vor2_x - 15, self.vor2_y - 15, self.vor2_x + 15, self.vor2_y + 15,
+            fill="magenta", outline="purple", width=3
+        )
+        self.canvas.create_text(
+            self.vor2_x, self.vor2_y - 25,
+            text="VOR 2", font=("Arial", 12, "bold"), fill="purple"
+        )
+
+        # Set which VOR is active (1 or 2)
+        if self.active_vor == 1:
+            active_x, active_y = self.vor1_x, self.vor1_y
+        else:
+            active_x, active_y = self.vor2_x, self.vor2_y
+
+        # Draw radials for the active VOR
         if self.show_all_radials:
             for angle in range(0, 360, 10):
                 line_width = 2 if angle % 90 == 0 else 1
                 dash_pattern = (5, 5) if angle % 30 != 0 else None
-                
-                end_x = vx + 800 * sin(radians(angle))
-                end_y = vy - 800 * cos(radians(angle))
-                
+                end_x = active_x + 800 * sin(radians(angle))
+                end_y = active_y - 800 * cos(radians(angle))
+                color = "gray" if angle % 30 != 0 else "darkgray"
                 radial = self.canvas.create_line(
-                    vx, vy, end_x, end_y, 
-                    fill="gray" if angle % 30 != 0 else "darkgray",
-                    width=line_width,
-                    dash=dash_pattern,
-                    tags="background_radial"
+                    active_x, active_y, end_x, end_y,
+                    fill=color, width=line_width, dash=dash_pattern, tags="background_radial"
                 )
                 self.all_radials.append(radial)
-        
-        # Initialize the OBS radial line
-        self.draw_radial_line(self.obs_angle)
 
-    def draw_radial_line(self, obs_angle):
-        """Draw a radial line from the VOR based on the OBS setting."""
+        # Draw selected radial line for the active VOR
+        self.draw_radial_line(self.obs_angle, active_x, active_y)
+        # Draw cone for the selected radial and VOR
+        self.draw_triangular_gradient(self.obs_angle, active_x, active_y)
+
+
+
+
+    def draw_radial_line(self, obs_angle, vx, vy):
+        # Remove old lines first
         if self.radial_line:
             self.canvas.delete(self.radial_line)
         if self.recip_radial_line:
             self.canvas.delete(self.recip_radial_line)
-        
-        vx, vy = self.vor_x, self.vor_y
-        
-        # Calculate dynamic length based on screen size to ensure lines extend across entire screen
+
         canvas_width = self.canvas.winfo_width()
         canvas_height = self.canvas.winfo_height()
-        
-        # Use the diagonal distance from VOR to screen corners to ensure full coverage
+
         max_distance = max(
-            sqrt((canvas_width - vx)**2 + (canvas_height - vy)**2),  # Bottom-right corner
-            sqrt(vx**2 + vy**2),  # Top-left corner
-            sqrt((canvas_width - vx)**2 + vy**2),  # Top-right corner
-            sqrt(vx**2 + (canvas_height - vy)**2)  # Bottom-left corner
+            sqrt((canvas_width - vx)**2 + (canvas_height - vy)**2),
+            sqrt(vx**2 + vy**2),
+            sqrt((canvas_width - vx)**2 + vy**2),
+            sqrt(vx**2 + (canvas_height - vy)**2)
         )
-        
-        # Add extra length to ensure complete screen coverage
-        length = int(max_distance * 1.2)  # 20% extra for safety margin
-        
+        length = int(max_distance * 1.2)
         angle_rad = radians(obs_angle)
-        
+
         end_x = vx + length * sin(angle_rad)
         end_y = vy - length * cos(angle_rad)
-        
         self.radial_line = self.canvas.create_line(
-            vx, vy, end_x, end_y,
-            fill="Red", width=2, 
-            tags="radial_line"
+            vx, vy, end_x, end_y, fill="Red", width=2, tags="radial_line"
         )
-        
+
         recip_end_x = vx - length * sin(angle_rad)
         recip_end_y = vy + length * cos(angle_rad)
-        
         self.recip_radial_line = self.canvas.create_line(
-            vx, vy, recip_end_x, recip_end_y,
-            fill="Red", width=2, 
-            tags="radial_line"
+            vx, vy, recip_end_x, recip_end_y, fill="Red", width=2, tags="radial_line"
         )
-        
         self.obs_value_label.config(text=f"{int(obs_angle):03d}\u00b0")
 
-    def draw_triangular_gradient(self, obs_angle):
-        """Draw triangular-shaped gradients to represent the radial cone and its reciprocal."""
-        # Clear existing triangular gradient elements
+
+
+    def draw_triangular_gradient(self, obs_angle, vx, vy, color="red"):
+        """Draws two radial cones (main and reciprocal) centered on (vx, vy) using the current OBS angle."""
+        # Remove previous
         for item in self.triangular_gradient:
             self.canvas.delete(item)
         self.triangular_gradient.clear()
 
-        vx, vy = self.vor_x, self.vor_y
-        
-        # Calculate dynamic length based on screen size to ensure cones extend across entire screen
+        # Canvas info
         canvas_width = self.canvas.winfo_width()
         canvas_height = self.canvas.winfo_height()
-        
-        # Use the diagonal distance from VOR to screen corners to ensure full coverage
         max_distance = max(
-            sqrt((canvas_width - vx)**2 + (canvas_height - vy)**2),  # Bottom-right corner
-            sqrt(vx**2 + vy**2),  # Top-left corner
-            sqrt((canvas_width - vx)**2 + vy**2),  # Top-right corner
-            sqrt(vx**2 + (canvas_height - vy)**2)  # Bottom-left corner
+            sqrt((canvas_width - vx)**2 + (canvas_height - vy)**2),
+            sqrt(vx**2 + vy**2),
+            sqrt((canvas_width - vx)**2 + vy**2),
+            sqrt(vx**2 + (canvas_height - vy)**2)
         )
-        
-        # Add extra length to ensure complete screen coverage
-        length = int(max_distance * 1.2)  # 20% extra for safety margin
-        
-        spread_angle = 15  # half-width of the cone (15 degrees on each side)
+        length = int(max_distance * 1.2)
+        spread_angle = 15  # degrees, half width
 
-
-        def draw_single_cone(base_angle, center_color="red", cone_type="main"):
-            """Draw a single triangular cone representing a VOR radial sector"""
-            side_color = "green"  # Always green for both cones
-            center_angle = radians(base_angle)
-            left_angle = radians(base_angle - spread_angle)
-            right_angle = radians(base_angle + spread_angle)
-
-            # Calculate end points for center line (main radial direction)
-            center_end_x = vx + length * sin(center_angle)
-            center_end_y = vy - length * cos(center_angle)
-            center_line = self.canvas.create_line(vx, vy, center_end_x, center_end_y,
-                                                fill=center_color, width=3, tags="triangular_gradient")
-
-            # Calculate end points for left boundary of the cone
-            left_end_x = vx + length * sin(left_angle)
-            left_end_y = vy - length * cos(left_angle)
-            left_boundary = self.canvas.create_line(vx, vy, left_end_x, left_end_y,
-                                                    fill=side_color, width=2, tags="triangular_gradient")
-
-            # Calculate end points for right boundary of the cone
-            right_end_x = vx + length * sin(right_angle)
-            right_end_y = vy - length * cos(right_angle)
-            right_boundary = self.canvas.create_line(vx, vy, right_end_x, right_end_y,
-                                                    fill=side_color, width=2, tags="triangular_gradient")
-
-            # Draw only the cone outline (no fill), outline color is green
-            cone_fill = self.canvas.create_polygon(
-                vx, vy, left_end_x, left_end_y, right_end_x, right_end_y,
-                fill="", outline=side_color, width=2, tags="triangular_gradient"
+        def draw_cone(center_deg, main_color):
+            c = radians(center_deg)
+            left = radians(center_deg - spread_angle)
+            right = radians(center_deg + spread_angle)
+            # Center, left, right lines
+            center_end = (vx + length * sin(c), vy - length * cos(c))
+            left_end = (vx + length * sin(left), vy - length * cos(left))
+            right_end = (vx + length * sin(right), vy - length * cos(right))
+            # Cone outline (just lines)
+            l_center = self.canvas.create_line(vx, vy, *center_end, fill=main_color, width=3, tags="triangular_gradient")
+            l_left = self.canvas.create_line(vx, vy, *left_end, fill="green", width=2, tags="triangular_gradient")
+            l_right = self.canvas.create_line(vx, vy, *right_end, fill="green", width=2, tags="triangular_gradient")
+            cone = self.canvas.create_polygon(
+                vx, vy, left_end[0], left_end[1], right_end[0], right_end[1],
+                fill="", outline="green", width=2, tags="triangular_gradient"
             )
-            self.triangular_gradient.append(cone_fill)
+            self.triangular_gradient.extend([l_center, l_left, l_right, cone])
 
-            # Store all cone elements for later deletion
-            self.triangular_gradient.extend([center_line, left_boundary, right_boundary])
+        # Main radial cone (red)
+        draw_cone(obs_angle, main_color=color)
+        # Reciprocal cone (blue)
+        draw_cone((obs_angle + 180) % 360, main_color="blue")
 
-        # Draw main cone (current OBS setting) - represents the selected radial
-        draw_single_cone(obs_angle, center_color="red", cone_type="main")
 
-        # Draw reciprocal cone (OBS + 180°) - represents the opposite radial
-        # This creates symmetrical functionality for the other side of the VOR
-        reciprocal_angle = (obs_angle + 180) % 360
-        draw_single_cone(reciprocal_angle, center_color="blue", cone_type="reciprocal")
-
-        # Create another VOR on the right side of the screen lower part
 
 
     def get_indicator_positions(self):
@@ -1894,9 +1920,16 @@ VOR NAVIGATION:
     def rotate_obs(self, delta):
         """Rotate the OBS setting."""
         self.obs_angle = (self.obs_angle + delta) % 360
-        
-        self.draw_radial_line(self.obs_angle)
+
+        # Get active VOR coordinates
+        if self.active_vor == 1:
+            active_x, active_y = self.vor1_x, self.vor1_y
+        else:
+            active_x, active_y = self.vor2_x, self.vor2_y
+
+        self.draw_radial_line(self.obs_angle, active_x, active_y)
         self.update_vor_output()
+
 
     def on_key_press(self, event):
         """Handle key press events for continuous movement and OBS adjustment."""
@@ -2001,30 +2034,52 @@ VOR NAVIGATION:
         self.root.after(50, self.movement_loop)
 
     def update_vor_output(self):
-        """Update all VOR-related displays and indicators, including responsive OBS meter."""
         try:
             ax = self.air_x_val
             ay = self.air_y_val
-            vx, vy = 50, 50
+            # Convert VOR canvas coords to grid for math
+            vx1, vy1 = self.vor1_x / 5, self.vor1_y / 5
+            vx2, vy2 = self.vor2_x / 5, self.vor2_y / 5
             obs = self.obs_angle
             hdg = self.airplane_angle % 360
 
-            bearing_to_vor = calculate_bearing(ax, ay, vx, vy)
-            distance = calculate_distance(ax, ay, vx, vy)
+            bearing1 = calculate_bearing(ax, ay, vx1, vy1)
+            distance1 = calculate_distance(ax, ay, vx1, vy1)
+            bearing2 = calculate_bearing(ax, ay, vx2, vy2)
+            distance2 = calculate_distance(ax, ay, vx2, vy2)
+
+            # Use selected VOR for CDI, TO/FROM, etc
+            if self.active_vor == 1:
+                vx, vy = self.vor1_x, self.vor1_y  # pixel coordinates for drawing
+                vx_grid, vy_grid = vx1, vy1        # grid coordinates for calculation
+                vor_label = "VOR 1"
+            else:
+                vx, vy = self.vor2_x, self.vor2_y
+                vx_grid, vy_grid = vx2, vy2
+                vor_label = "VOR 2"
+
+            bearing_to_vor = calculate_bearing(ax, ay, vx_grid, vy_grid)
+            distance = calculate_distance(ax, ay, vx_grid, vy_grid)
             direction = calculate_vor_to_from(obs, bearing_to_vor)
             cdi_deflection = calculate_cdi_deflection(obs, bearing_to_vor)
-
-            self.draw_triangular_gradient(obs)
-
             radial_from_vor = (bearing_to_vor + 180) % 360
-            result = (f"Distance: {distance:.1f} NM\n"
-                    f"Bearing to VOR: {bearing_to_vor:.1f}\u00b0\n"
-                    f"Radial from VOR: {radial_from_vor:.1f}\u00b0\n"
-                    f"OBS Setting: {obs:.1f}\u00b0\n"
-                    f"TO/FROM: {direction}\n"
-                    f"HSI Deflection: {cdi_deflection:.1f} dots\n"
-                    f"Current HDG: {hdg:.1f}\u00b0")
-            # Only update the text if panel is visible and result_text exists
+
+            # *** ROTATE THE TRIANGULAR CONE WITH THE RADIAL/OBS ***
+            self.draw_triangular_gradient(obs, vx, vy)
+
+            result = (
+                f"Aircraft Grid Position: ({ax:.1f}, {ay:.1f})\n"
+                f"Distance to VOR 1: {distance1:.1f} NM  Bearing: {bearing1:.1f}°\n"
+                f"Distance to VOR 2: {distance2:.1f} NM  Bearing: {bearing2:.1f}°\n"
+                f"[Active: {vor_label}]\n"
+                f"Distance: {distance:.1f} NM\n"
+                f"Bearing to VOR: {bearing_to_vor:.1f}°\n"
+                f"Radial from VOR: {radial_from_vor:.1f}°\n"
+                f"OBS Setting: {obs:.1f}°\n"
+                f"TO/FROM: {direction}\n"
+                f"HSI Deflection: {cdi_deflection:.1f} dots\n"
+                f"Current HDG: {hdg:.1f}°"
+            )
             if getattr(self, 'vor_output_visible', True) and hasattr(self, 'result_text'):
                 self.canvas.itemconfig(self.result_text, text=result)
 
@@ -2033,9 +2088,9 @@ VOR NAVIGATION:
             self.update_obs_indicator(obs)
             self.update_obs_cdi_needle(obs, bearing_to_vor)
         except Exception as e:
-            # Only update error if panel is visible and result_text exists
             if getattr(self, 'vor_output_visible', True) and hasattr(self, 'result_text'):
                 self.canvas.itemconfig(self.result_text, text=f"Error: {str(e)}")
+
 
 
 # --- Run ---
