@@ -1421,17 +1421,18 @@ The browser version includes:
             )
             
             # Instruction content
-            instruction_content = """AIRCRAFT CONTROLS:
+            instruction_content = """✈️ AIRCRAFT CONTROLS:
 • Arrow Keys: Move aircraft
 • Mouse: Click & drag to move
 • A/D Keys: Rotate OBS (±5°)
 • Q/E Keys: Fine OBS (±1°)
 • R Key: Reset simulation
 
-VOR NAVIGATION:
+🎛️ VOR NAVIGATION:
 • Watch CDI needle deflection
 • Center needle = on radial
-• OBS sets selected radial"""
+• TO/FROM flag shows direction
+• OBS sets selected radial
             
             # Result text area
             instruction_text = self.canvas.create_text(
