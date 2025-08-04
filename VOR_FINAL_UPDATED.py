@@ -503,22 +503,6 @@ class VORSimulatorGUI:
         if FOLIUM_AVAILABLE:
             tk.Button(compass_frame, text="Open Real-World Map", command=self.open_real_world_map, bg="#66ff66", font=("Arial", 10, "bold"), width=18).pack(side=tk.TOP, pady=2)
             tk.Button(compass_frame, text="Load VOR Stations", command=self.show_vor_stations, bg="#66ccff", font=("Arial", 10, "bold"), width=18).pack(side=tk.TOP, pady=2)
-
-        # Control Methods Info
-        control_info_frame = tk.Frame(control_frame, bg="#d0d0d0")
-        control_info_frame.pack(side=tk.LEFT, padx=20, pady=5)
-        tk.Label(control_info_frame, text="Aircraft Controls:", bg="#d0d0d0", font=("Arial", 10, "bold")).pack(side=tk.TOP)
-        
-        # Create info text
-        control_text = "Keyboard: Arrow Keys\n"
-        if self.joystick_enabled:
-            control_text += f"Joystick: {self.joystick.get_name()}\n"
-        else:
-            control_text += "Joystick: Not detected\n"
-        control_text += "Mouse: Left-click map, then move"
-        
-        tk.Label(control_info_frame, text=control_text, bg="#d0d0d0", 
-                font=("Arial", 8), justify=tk.LEFT).pack(side=tk.TOP, anchor=tk.W)
         
         # --- VOR SELECTOR ---
         vor_select_frame = tk.Frame(control_frame, bg="#d0d0d0")
