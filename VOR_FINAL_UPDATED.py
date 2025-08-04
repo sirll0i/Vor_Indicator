@@ -1,7 +1,12 @@
 import tkinter as tk
+from tkinter import messagebox
 from math import atan2, degrees, sqrt, sin, cos, radians
 from PIL import Image, ImageTk, ImageDraw, UnidentifiedImageError
 import os
+import sys
+import subprocess
+import webbrowser
+import tempfile
 
 # Try to import pygame for joystick support
 try:
@@ -10,6 +15,211 @@ try:
 except ImportError:
     PYGAME_AVAILABLE = False
     print("Pygame not available. Joystick support disabled. Install pygame with: pip install pygame")
+
+# Try to import folium for real-world mapping
+try:
+    import folium
+    FOLIUM_AVAILABLE = True
+except ImportError:
+    FOLIUM_AVAILABLE = False
+    print("Folium not available. Real-world mapping disabled. Install folium with: pip install folium")
+
+# Try to import tkinterweb for embedded web view
+try:
+    import tkinterweb
+    TKINTERWEB_AVAILABLE = True
+except ImportError:
+    TKINTERWEB_AVAILABLE = False
+    print("tkinterweb not available. Embedded maps disabled. Install with: pip install tkinterweb")
+
+# Try to import matplotlib for 2D simulation background
+try:
+    import matplotlib.pyplot as plt
+    import matplotlib.patches as patches
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    import numpy as np
+    MATPLOTLIB_AVAILABLE = True
+except ImportError:
+    MATPLOTLIB_AVAILABLE = False
+    print("matplotlib not available. 2D simulation background disabled. Install with: pip install matplotlib")
+
+# Real VOR stations database (Philippines focus with some international)
+REAL_VOR_STATIONS = {
+    # Philippines VOR Stations
+    "MIA": {"name": "Manila VOR", "lat": 14.5086, "lon": 121.0198, "freq": "116.3", "country": "Philippines"},
+    "CEB": {"name": "Cebu VOR", "lat": 10.3157, "lon": 123.8854, "freq": "114.5", "country": "Philippines"},
+    "ILO": {"name": "Iloilo VOR", "lat": 10.7126, "lon": 122.5445, "freq": "112.9", "country": "Philippines"},
+    "DVO": {"name": "Davao VOR", "lat": 7.1081, "lon": 125.6048, "freq": "113.3", "country": "Philippines"},
+    "BAG": {"name": "Baguio VOR", "lat": 16.3759, "lon": 120.6200, "freq": "115.1", "country": "Philippines"},
+    "TAC": {"name": "Tacloban VOR", "lat": 11.2279, "lon": 125.0278, "freq": "114.1", "country": "Philippines"},
+    "ZAM": {"name": "Zamboanga VOR", "lat": 6.9066, "lon": 122.0586, "freq": "112.5", "country": "Philippines"},
+    
+    # International VOR Stations (nearby)
+    "SGN": {"name": "Ho Chi Minh VOR", "lat": 10.8231, "lon": 106.6297, "freq": "117.7", "country": "Vietnam"},
+    "BKK": {"name": "Bangkok VOR", "lat": 13.6900, "lon": 100.7501, "freq": "116.6", "country": "Thailand"},
+    "SIN": {"name": "Singapore VOR", "lat": 1.3521, "lon": 103.8198, "freq": "115.8", "country": "Singapore"},
+    "KUL": {"name": "Kuala Lumpur VOR", "lat": 3.1390, "lon": 101.6869, "freq": "114.9", "country": "Malaysia"},
+    "CGK": {"name": "Jakarta VOR", "lat": -6.1256, "lon": 106.6558, "freq": "113.7", "country": "Indonesia"},
+    
+    # US VOR Stations (for reference)
+    "LAX": {"name": "Los Angeles VOR", "lat": 33.9425, "lon": -118.4081, "freq": "113.6", "country": "USA"},
+    "JFK": {"name": "Kennedy VOR", "lat": 40.6413, "lon": -73.7781, "freq": "115.9", "country": "USA"},
+    "ORD": {"name": "Chicago VOR", "lat": 41.9742, "lon": -87.9073, "freq": "113.9", "country": "USA"},
+}
+
+def create_matplotlib_background(width=800, height=600, style='radar'):
+    """Create a 2D simulation background using matplotlib."""
+    if not MATPLOTLIB_AVAILABLE:
+        return None
+    
+    # Create figure with black background
+    fig, ax = plt.subplots(figsize=(width/100, height/100), facecolor='black')
+    ax.set_facecolor('black')
+    ax.set_xlim(-1, 1)
+    ax.set_ylim(-1, 1)
+    ax.axis('off')
+    
+    if style == 'radar':
+        # Create radar-style background
+        # Draw concentric circles
+        for radius in [0.2, 0.4, 0.6, 0.8, 1.0]:
+            circle = patches.Circle((0, 0), radius, fill=False, 
+                                  edgecolor='lime', linewidth=1, alpha=0.6)
+            ax.add_patch(circle)
+        
+        # Draw range rings with labels
+        for radius, label in [(0.2, '10nm'), (0.4, '20nm'), (0.6, '30nm'), (0.8, '40nm')]:
+            ax.text(radius, 0.05, label, color='lime', fontsize=8, ha='center')
+        
+        # Draw radial lines (compass directions)
+        angles = np.linspace(0, 2*np.pi, 36, endpoint=False)  # Every 10 degrees
+        for angle in angles:
+            x = [0, np.cos(angle)]
+            y = [0, np.sin(angle)]
+            ax.plot(x, y, 'lime', linewidth=0.5, alpha=0.3)
+        
+        # Draw cardinal directions
+        directions = {'N': (0, 0.95), 'E': (0.95, 0), 'S': (0, -0.95), 'W': (-0.95, 0)}
+        for direction, (x, y) in directions.items():
+            ax.text(x, y, direction, color='lime', fontsize=14, ha='center', va='center', weight='bold')
+        
+        # Add heading markers every 30 degrees
+        for heading in range(0, 360, 30):
+            angle_rad = np.radians(90 - heading)  # Convert to math coordinates
+            x = 0.85 * np.cos(angle_rad)
+            y = 0.85 * np.sin(angle_rad)
+            ax.text(x, y, str(heading).zfill(3), color='lime', fontsize=10, ha='center', va='center')
+    
+    elif style == 'navigation':
+        # Create navigation chart style background
+        # Grid lines
+        for i in np.arange(-1, 1.1, 0.1):
+            ax.axhline(y=i, color='darkblue', linewidth=0.5, alpha=0.3)
+            ax.axvline(x=i, color='darkblue', linewidth=0.5, alpha=0.3)
+        
+        # Major grid lines
+        for i in np.arange(-1, 1.1, 0.5):
+            ax.axhline(y=i, color='blue', linewidth=1, alpha=0.6)
+            ax.axvline(x=i, color='blue', linewidth=1, alpha=0.6)
+        
+        # Center crosshairs
+        ax.axhline(y=0, color='white', linewidth=2)
+        ax.axvline(x=0, color='white', linewidth=2)
+        
+        # Distance scale
+        scale_text = "Scale: 1 unit = 50nm"
+        ax.text(-0.9, -0.9, scale_text, color='white', fontsize=10)
+    
+    elif style == 'simple':
+        # Simple crosshair background
+        ax.axhline(y=0, color='white', linewidth=2, alpha=0.8)
+        ax.axvline(x=0, color='white', linewidth=2, alpha=0.8)
+        
+        # Add some grid lines
+        for i in np.arange(-0.8, 0.9, 0.4):
+            ax.axhline(y=i, color='gray', linewidth=1, alpha=0.3)
+            ax.axvline(x=i, color='gray', linewidth=1, alpha=0.3)
+    
+    # Convert to PIL Image
+    canvas = FigureCanvasAgg(fig)
+    canvas.draw()
+    renderer = canvas.get_renderer()
+    raw_data = renderer.buffer_rgba()
+    size = canvas.get_width_height()
+    
+    plt.close(fig)  # Clean up
+    
+    # Convert to PIL Image
+    pil_image = Image.frombuffer("RGBA", size, raw_data).convert("RGB")
+    return pil_image
+
+def create_vor_simulation_background(width=800, height=600, vor_freq=None):
+    """Create a VOR-specific simulation background with radials."""
+    if not MATPLOTLIB_AVAILABLE:
+        return None
+    
+    # Create figure
+    fig, ax = plt.subplots(figsize=(width/100, height/100), facecolor='black')
+    ax.set_facecolor('black')
+    ax.set_xlim(-1, 1)
+    ax.set_ylim(-1, 1)
+    ax.axis('off')
+    
+    # Draw VOR station at center
+    station = patches.Circle((0, 0), 0.05, fill=True, facecolor='red', edgecolor='white', linewidth=2)
+    ax.add_patch(station)
+    
+    # Draw radials every 10 degrees
+    for radial in range(0, 360, 10):
+        angle_rad = np.radians(90 - radial)
+        
+        # Different line styles for different radials
+        if radial % 30 == 0:
+            # Major radials
+            linewidth = 2
+            alpha = 0.8
+            color = 'lime'
+        elif radial % 10 == 0:
+            # Minor radials
+            linewidth = 1
+            alpha = 0.6
+            color = 'lime'
+        
+        # Draw radial line
+        x = [0.1 * np.cos(angle_rad), 0.9 * np.cos(angle_rad)]
+        y = [0.1 * np.sin(angle_rad), 0.9 * np.sin(angle_rad)]
+        ax.plot(x, y, color=color, linewidth=linewidth, alpha=alpha)
+        
+        # Label major radials
+        if radial % 30 == 0:
+            label_x = 0.95 * np.cos(angle_rad)
+            label_y = 0.95 * np.sin(angle_rad)
+            ax.text(label_x, label_y, f"{radial:03d}°", color='lime', 
+                   fontsize=10, ha='center', va='center', weight='bold')
+    
+    # Draw range rings
+    for radius, distance in [(0.3, '15nm'), (0.6, '30nm'), (0.9, '45nm')]:
+        circle = patches.Circle((0, 0), radius, fill=False, 
+                              edgecolor='cyan', linewidth=1, alpha=0.5, linestyle='--')
+        ax.add_patch(circle)
+        ax.text(radius * 0.707, radius * 0.707, distance, color='cyan', fontsize=8)
+    
+    # Add VOR frequency if provided
+    if vor_freq:
+        ax.text(0, -0.15, f"VOR {vor_freq} MHz", color='white', 
+               fontsize=12, ha='center', va='center', weight='bold')
+    
+    # Convert to PIL Image
+    canvas = FigureCanvasAgg(fig)
+    canvas.draw()
+    renderer = canvas.get_renderer()
+    raw_data = renderer.buffer_rgba()
+    size = canvas.get_width_height()
+    
+    plt.close(fig)
+    
+    pil_image = Image.frombuffer("RGBA", size, raw_data).convert("RGB")
+    return pil_image
 
 # --- VOR Logic ---
 def calculate_bearing(x_aircraft, y_aircraft, x_vor, y_vor):
@@ -88,7 +298,7 @@ class VORSimulatorGUI:
         # Load background image
         try:
             script_dir = os.path.dirname(os.path.abspath(__file__))
-            image_path = os.path.join(script_dir, "map_bg.png")
+            image_path = os.path.join(script_dir, "vor_bg.png")
             if os.path.exists(image_path):
                 self.bg_img = Image.open(image_path).resize((2000, 900))
                 self.tk_img = ImageTk.PhotoImage(self.bg_img)
@@ -246,11 +456,25 @@ class VORSimulatorGUI:
         tk.Checkbutton(display_frame, text="Show Radial Labels", variable=self.labels_var, 
                       bg="#d0d0d0", command=self.toggle_labels).pack(side=tk.TOP, anchor=tk.W)
         
+        # Background Options
+        if MATPLOTLIB_AVAILABLE:
+            background_frame = tk.Frame(control_frame, bg="#d0d0d0")
+            background_frame.pack(side=tk.LEFT, padx=20, pady=5)
+            tk.Label(background_frame, text="Background:", bg="#d0d0d0", font=("Arial", 10, "bold")).pack(side=tk.TOP)
+            tk.Button(background_frame, text="Radar Style", command=lambda: self.apply_matplotlib_background('radar'), 
+                     bg="#ff9999", font=("Arial", 9), width=12).pack(side=tk.TOP, pady=1)
+            tk.Button(background_frame, text="Default Image", command=self.restore_default_background, 
+                     bg="#ffff99", font=("Arial", 9), width=12).pack(side=tk.TOP, pady=1)
+        
         # Compass Launch Button
         compass_frame = tk.Frame(control_frame, bg="#d0d0d0")
         compass_frame.pack(side=tk.LEFT, padx=20, pady=5)
-        tk.Label(compass_frame, text="Compass:", bg="#d0d0d0", font=("Arial", 10, "bold")).pack(side=tk.TOP)
-        tk.Button(compass_frame, text="Open Compass Window", command=self.launch_compass_window, bg="#ffe066", font=("Arial", 10, "bold"), width=18).pack(side=tk.TOP, pady=2)
+        tk.Label(compass_frame, text="Navigation:", bg="#d0d0d0", font=("Arial", 10, "bold")).pack(side=tk.TOP)
+        
+        # Real-World Map Button
+        if FOLIUM_AVAILABLE:
+            tk.Button(compass_frame, text="Open Real-World Map", command=self.open_real_world_map, bg="#66ff66", font=("Arial", 10, "bold"), width=18).pack(side=tk.TOP, pady=2)
+            tk.Button(compass_frame, text="Load VOR Stations", command=self.show_vor_stations, bg="#66ccff", font=("Arial", 10, "bold"), width=18).pack(side=tk.TOP, pady=2)
 
         # Control Methods Info
         control_info_frame = tk.Frame(control_frame, bg="#d0d0d0")
@@ -276,9 +500,6 @@ class VORSimulatorGUI:
 
     def launch_compass_window(self):
         """Launch compass.py as a separate Pygame window."""
-        import subprocess
-        import sys
-        import os
         script_path = os.path.join(os.path.dirname(__file__), "compass.py")
         if os.path.exists(script_path):
             try:
@@ -287,6 +508,227 @@ class VORSimulatorGUI:
                 print(f"Failed to launch compass.py: {e}")
         else:
             print("compass.py not found in the current directory.")
+
+    def open_real_world_map(self):
+        """Create and open a real-world interactive map with VOR stations."""
+        if not FOLIUM_AVAILABLE:
+            print("Folium not available. Cannot create real-world map.")
+            return
+        
+        try:
+            # Create a map centered on the Philippines
+            m = folium.Map(
+                location=[13.41, 122.56],  # Philippines center
+                zoom_start=6,
+                tiles='OpenStreetMap'
+            )
+            
+            # Add VOR stations as markers
+            for vor_id, station in REAL_VOR_STATIONS.items():
+                # Different colors for different countries
+                color = {
+                    'Philippines': 'red',
+                    'Vietnam': 'blue', 
+                    'Thailand': 'green',
+                    'Singapore': 'orange',
+                    'Malaysia': 'purple',
+                    'Indonesia': 'darkred',
+                    'USA': 'darkblue'
+                }.get(station['country'], 'gray')
+                
+                popup_text = f"""
+                <b>{station['name']} ({vor_id})</b><br>
+                Frequency: {station['freq']} MHz<br>
+                Country: {station['country']}<br>
+                Coordinates: {station['lat']:.4f}, {station['lon']:.4f}
+                """
+                
+                folium.Marker(
+                    location=[station['lat'], station['lon']],
+                    popup=folium.Popup(popup_text, max_width=300),
+                    tooltip=f"{vor_id} - {station['name']}",
+                    icon=folium.Icon(color=color, icon='radio', prefix='fa')
+                ).add_to(m)
+            
+            # Add a legend
+            legend_html = '''
+            <div style="position: fixed; 
+                        bottom: 50px; left: 50px; width: 200px; height: 150px; 
+                        background-color: white; border:2px solid grey; z-index:9999; 
+                        font-size:14px; padding: 10px">
+            <p><b>VOR Stations Legend</b></p>
+            <p><i class="fa fa-circle" style="color:red"></i> Philippines</p>
+            <p><i class="fa fa-circle" style="color:blue"></i> Vietnam</p>
+            <p><i class="fa fa-circle" style="color:green"></i> Thailand</p>
+            <p><i class="fa fa-circle" style="color:orange"></i> Singapore</p>
+            <p><i class="fa fa-circle" style="color:purple"></i> Malaysia</p>
+            <p><i class="fa fa-circle" style="color:darkred"></i> Indonesia</p>
+            </div>
+            '''
+            m.get_root().html.add_child(folium.Element(legend_html))
+            
+            # Save and open the map
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.html')
+            map_path = temp_file.name
+            temp_file.close()
+            
+            m.save(map_path)
+            webbrowser.open(f'file://{map_path}')
+            print(f"Real-world VOR map opened in browser: {map_path}")
+            
+        except Exception as e:
+            print(f"Error creating real-world map: {e}")
+
+    def show_vor_stations(self):
+        """Display a window with VOR station information."""
+        if not FOLIUM_AVAILABLE:
+            print("Folium not available.")
+            return
+            
+        # Create a new window for VOR station list
+        vor_window = tk.Toplevel(self.root)
+        vor_window.title("Real VOR Stations Database")
+        vor_window.geometry("600x500")
+        vor_window.configure(bg="#f0f0f0")
+        
+        # Create a scrollable text widget
+        text_frame = tk.Frame(vor_window, bg="#f0f0f0")
+        text_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        scrollbar = tk.Scrollbar(text_frame)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        text_widget = tk.Text(text_frame, yscrollcommand=scrollbar.set, 
+                             font=("Courier", 10), bg="white")
+        text_widget.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.config(command=text_widget.yview)
+        
+        # Format VOR station information
+        vor_info = "REAL VOR STATIONS DATABASE\n"
+        vor_info += "=" * 50 + "\n\n"
+        
+        # Group by country
+        countries = {}
+        for vor_id, station in REAL_VOR_STATIONS.items():
+            country = station['country']
+            if country not in countries:
+                countries[country] = []
+            countries[country].append((vor_id, station))
+        
+        for country in sorted(countries.keys()):
+            vor_info += f"{country.upper()}\n"
+            vor_info += "-" * len(country) + "\n"
+            
+            for vor_id, station in sorted(countries[country]):
+                vor_info += f"{vor_id:4} - {station['name']:<25} "
+                vor_info += f"Freq: {station['freq']:<6} MHz "
+                vor_info += f"({station['lat']:8.4f}, {station['lon']:9.4f})\n"
+            vor_info += "\n"
+        
+        # Add usage instructions
+        vor_info += "\nUSAGE INSTRUCTIONS:\n"
+        vor_info += "=" * 20 + "\n"
+        vor_info += "1. Click 'Open Real-World Map' to view VOR stations on an interactive map\n"
+        vor_info += "2. Each VOR station is color-coded by country\n"
+        vor_info += "3. Click on any VOR marker to see detailed information\n"
+        vor_info += "4. Use this data for realistic navigation planning\n"
+        vor_info += "5. Frequencies are in MHz (VHF range 108-118 MHz)\n\n"
+        vor_info += "Note: This simulator uses grid coordinates (0-100), but you can\n"
+        vor_info += "reference real VOR stations for authentic navigation scenarios."
+        
+        text_widget.insert(tk.END, vor_info)
+        text_widget.config(state=tk.DISABLED)  # Make read-only
+        
+        # Add buttons
+        button_frame = tk.Frame(vor_window, bg="#f0f0f0")
+        button_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        tk.Button(button_frame, text="Open Real-World Map", 
+                 command=self.open_real_world_map, bg="#66ff66", 
+                 font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=5)
+        
+        tk.Button(button_frame, text="Close", 
+                 command=vor_window.destroy, bg="#ffaa66", 
+                 font=("Arial", 10, "bold")).pack(side=tk.RIGHT, padx=5)
+
+    def load_vor_station(self, vor_id):
+        """Load a real VOR station's data into the simulator."""
+        if vor_id not in REAL_VOR_STATIONS:
+            print(f"VOR station {vor_id} not found in database.")
+            return
+        
+        station = REAL_VOR_STATIONS[vor_id]
+        
+        # For demonstration, we can show the VOR info and optionally
+        # set the simulator to use this VOR's frequency/position conceptually
+        print(f"Loaded VOR Station: {station['name']} ({vor_id})")
+        print(f"Frequency: {station['freq']} MHz")
+        print(f"Location: {station['lat']:.4f}, {station['lon']:.4f}")
+        print(f"Country: {station['country']}")
+        
+        # Update the result text if visible to show current VOR
+        if hasattr(self, 'result_text') and getattr(self, 'vor_output_visible', True):
+            current_text = self.canvas.itemcget(self.result_text, 'text')
+            updated_text = f"Using Real VOR: {station['name']} ({vor_id}) - {station['freq']} MHz\n" + current_text
+            self.canvas.itemconfig(self.result_text, text=updated_text)
+
+    def create_vor_selection_menu(self):
+        """Create a dropdown menu for selecting real VOR stations."""
+        # This could be added to the control panel if desired
+        vor_frame = tk.Frame(self.root, bg="#d0d0d0")
+        vor_frame.pack(side=tk.TOP, fill=tk.X, padx=5, pady=2)
+        
+        tk.Label(vor_frame, text="Real VOR Station:", bg="#d0d0d0", 
+                font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=5)
+        
+        # Create dropdown with VOR stations
+        self.vor_var = tk.StringVar()
+        vor_options = [f"{vor_id} - {data['name']}" for vor_id, data in REAL_VOR_STATIONS.items()]
+        vor_dropdown = tk.OptionMenu(vor_frame, self.vor_var, *vor_options, 
+                                   command=self.on_vor_selection)
+        vor_dropdown.config(bg="#e0e0e0", width=25)
+        vor_dropdown.pack(side=tk.LEFT, padx=5)
+    
+    def on_vor_selection(self, selection):
+        """Handle VOR station selection from dropdown."""
+        vor_id = selection.split(' - ')[0]  # Extract VOR ID
+        self.load_vor_station(vor_id)
+
+
+    def apply_matplotlib_background(self, style='simple'):
+        """Apply a matplotlib-generated background to the canvas."""
+        if not MATPLOTLIB_AVAILABLE:
+            messagebox.showinfo("Feature Unavailable", 
+                              "Matplotlib is not available. Install with: pip install matplotlib")
+            return
+        try:
+            # Get canvas dimensions
+            canvas_width = self.canvas.winfo_width()
+            canvas_height = self.canvas.winfo_height()
+            if canvas_width <= 1 or canvas_height <= 1:
+                canvas_width = 800
+                canvas_height = 600
+            bg_image = create_matplotlib_background(canvas_width, canvas_height, style)
+            if bg_image:
+                print(f"Successfully generated {style} matplotlib background: {canvas_width}x{canvas_height}")
+                self.bg_photo = ImageTk.PhotoImage(bg_image)
+                self.using_matplotlib_bg = True
+                # Clear existing backgrounds and redraw everything with new background
+                self.redraw_all()
+            else:
+                print(f"Failed to generate matplotlib background with style: {style}")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to create matplotlib background: {str(e)}")
+
+    def restore_default_background(self):
+        """Restore the default background image."""
+        try:
+            self.using_matplotlib_bg = False
+            # Redraw everything with default background
+            self.redraw_all()
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to restore background: {str(e)}")
+
 
     def set_speed(self, val):
         """Set aircraft speed from the slider."""
@@ -357,8 +799,18 @@ class VORSimulatorGUI:
         height = self.canvas.winfo_height()
         self.indicator_radius = max(min(width, height) * 0.1, 60)
         self.canvas.delete("all")
-        if self.tk_img:
+        # Draw the correct background
+        if hasattr(self, 'using_matplotlib_bg') and self.using_matplotlib_bg:
+            if hasattr(self, 'bg_photo') and self.bg_photo:
+                print("Drawing matplotlib background")
+                self.canvas.create_image(0, 0, anchor="nw", image=self.bg_photo, tags="background")
+            else:
+                print("Matplotlib background flag set but no bg_photo available")
+        elif self.tk_img:
+            print("Drawing default background image")
             self.canvas.create_image(0, 0, anchor="nw", image=self.tk_img)
+        else:
+            print("No background available")
         self.draw_vor_station()
         self.draw_airplane(self.air_x_val, self.air_y_val, self.airplane_angle)
         self.create_output_labels()
@@ -465,7 +917,7 @@ class VORSimulatorGUI:
         
         self.recip_radial_line = self.canvas.create_line(
             vx, vy, recip_end_x, recip_end_y,
-            fill="Red", width=2, 
+            fill="Blue", width=2, 
             tags="radial_line"
         )
         
@@ -513,31 +965,15 @@ class VORSimulatorGUI:
             left_end_x = vx + length * sin(left_angle)
             left_end_y = vy - length * cos(left_angle)
             left_boundary = self.canvas.create_line(vx, vy, left_end_x, left_end_y,
-                                                    fill=side_color, width=2, tags="triangular_gradient")
+                                                    fill="green", width=2, tags="triangular_gradient")
 
             # Calculate end points for right boundary of the cone
             right_end_x = vx + length * sin(right_angle)
             right_end_y = vy - length * cos(right_angle)
             right_boundary = self.canvas.create_line(vx, vy, right_end_x, right_end_y,
-                                                    fill=side_color, width=2, tags="triangular_gradient")
+                                                    fill="green", width=2, tags="triangular_gradient")
 
-            # Add flexible cone fill that extends to screen edges for better visualization
-            if cone_type == "main":
-                # Create a subtle filled triangle for the main cone with full screen coverage
-                cone_fill = self.canvas.create_polygon(
-                    vx, vy, left_end_x, left_end_y, right_end_x, right_end_y,
-                    fill=center_color, stipple="gray25", outline="", tags="triangular_gradient"
-                )
-                self.triangular_gradient.append(cone_fill)
-            else:
-                # Create a different pattern for the reciprocal cone with full screen coverage
-                cone_fill = self.canvas.create_polygon(
-                    vx, vy, left_end_x, left_end_y, right_end_x, right_end_y,
-                    fill=center_color, stipple="gray50", outline="", tags="triangular_gradient"
-                )
-                self.triangular_gradient.append(cone_fill)
-
-            # Store all cone elements for later deletion
+            # Store all cone elements for later deletion (no polygon outline)
             self.triangular_gradient.extend([center_line, left_boundary, right_boundary])
 
         # Draw main cone (current OBS setting) - represents the selected radial
@@ -780,9 +1216,6 @@ class VORSimulatorGUI:
         self.obs_rose_elements = []
         self.create_obs_rose_markings(x, y, radius, 0)
 
-        # Top reference triangle (12 o'clock)
-        self.canvas.create_polygon(x - radius*0.07, y - radius + radius*0.09, x + radius*0.07, y - radius + radius*0.09, x, y - radius*0.03, fill="white", outline="white", width=2)
-
         # Curved dotted deviation scale (responsive)
         arc_radius = radius * 0.5
         arc_angle_range = 60
@@ -814,6 +1247,7 @@ class VORSimulatorGUI:
         mid_angle_rad = math.radians(arc_center_angle)
         tip_x = x + arc_radius * math.cos(mid_angle_rad)
         tip_y = y - arc_radius * math.sin(mid_angle_rad)
+        # Draw the CDI needle only in yellow (no extra white line)
         self.obs_cdi_needle = self.canvas.create_line(x, y, tip_x, tip_y, fill="yellow", width=int(radius*0.06))
         perp_angle = mid_angle_rad + math.pi / 2
         left_x = tip_x + arrow_width * math.cos(perp_angle)
@@ -824,10 +1258,16 @@ class VORSimulatorGUI:
         arrow_tip_y = tip_y - arrow_height * math.sin(mid_angle_rad)
         self.obs_cdi_arrow = self.canvas.create_polygon(left_x, left_y, right_x, right_y, arrow_tip_x, arrow_tip_y, fill="yellow", outline="yellow")
 
-        # Center dot and labels
-        self.canvas.create_oval(x - radius*0.03, y - radius*0.03, x + radius*0.03, y + radius*0.03, fill="white")
-        self.obs_setting_display = self.canvas.create_text(x, y + radius + 0.18 * radius, text="000°", font=("Arial", int(radius * 0.14), "bold"), fill="darkblue")
-        self.canvas.create_text(x, y + radius + 0.34 * radius, text="OBS Indicator", font=("Arial", int(radius * 0.13), "bold"), fill="darkblue")
+        # Center dot and labels (no white line above dot)
+        self.canvas.create_oval(x - radius*0.03, y - radius*0.03, x + radius*0.03, y + radius*0.03, fill="white", outline="white")
+        self.obs_setting_display = self.canvas.create_text(
+            x, y + radius + 0.18 * radius,
+            text="000°",
+            font=("Arial", int(radius * 0.14), "bold"),
+            fill="darkblue",
+            state="hidden"  # Hide visually, but keep functional
+        )
+        self.canvas.create_text(x, y + radius + 0.24 * radius, text="OBS Indicator", font=("Arial", int(radius * 0.13), "bold"), fill="darkblue")
 
     def create_obs_rose_markings(self, x, y, radius, rotation_offset):
         # Responsive OBS rose: all elements scale and position with the parent
