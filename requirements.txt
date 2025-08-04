@@ -1,0 +1,34 @@
+# VOR Navigation Simulator - Required Python Packages
+# Installation: pip install -r requirements.txt
+
+# Core GUI and Image Processing
+Pillow>=8.0.0
+
+# Real-world mapping (required for VOR station maps)
+folium>=0.12.0
+
+# Embedded web browser for in-app map display (HIGHLY RECOMMENDED)
+# This package enables maps to display inside the app instead of browser
+tkinterweb>=3.0.0
+
+# 2D simulation backgrounds and charts (optional but recommended)
+matplotlib>=3.3.0
+numpy>=1.20.0
+
+# Joystick support (optional)
+pygame>=2.0.0
+
+# Note: tkinter is included with Python standard library
+# Math functions are from Python standard library
+
+# INSTALLATION INSTRUCTIONS:
+# 1. Open Command Prompt or Terminal
+# 2. Navigate to the folder containing this file
+# 3. Run: pip install -r requirements.txt
+# 4. If you get permission errors, try: pip install --user -r requirements.txt
+
+# MINIMUM INSTALL (for basic functionality):
+# pip install folium pillow
+
+# FOR EMBEDDED MAPS (recommended):
+# pip install tkinterweb folium pillow

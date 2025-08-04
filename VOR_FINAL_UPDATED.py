@@ -7,6 +7,8 @@ import sys
 import subprocess
 import webbrowser
 import tempfile
+import urllib.parse
+import urllib.request
 import math
 
 # Try to import pygame for joystick support
@@ -296,6 +298,11 @@ class VORSimulatorGUI:
         self.vor_output_visible = True
         self.vor_output_panel_items = []
         self.vor_show_tab = None
+        
+        # Instruction box visibility
+        self.instruction_visible = True
+        self.instruction_panel_items = []
+        self.instruction_show_tab = None
         # Load background image
         try:
             script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -365,6 +372,7 @@ class VORSimulatorGUI:
         self.create_control_panel()
         self.draw_vor_station()
         self.create_output_labels()
+        self.create_instruction_box()
         self.create_indicators()
         
 
@@ -391,20 +399,36 @@ class VORSimulatorGUI:
         self.update_vor_output()
 
     def on_canvas_click(self, event):
-        # Check hide button
+        # Check VOR output hide button
         if self.vor_output_visible and hasattr(self, "vor_output_hide_area"):
             x1, y1, x2, y2 = self.vor_output_hide_area
             if x1 <= event.x <= x2 and y1 <= event.y <= y2:
                 self.vor_output_visible = False
                 self.create_output_labels()
                 return
-        # Check show tab
+        # Check VOR output show tab
         elif not self.vor_output_visible and hasattr(self, "vor_output_show_area"):
             x1, y1, x2, y2 = self.vor_output_show_area
             if x1 <= event.x <= x2 and y1 <= event.y <= y2:
                 self.vor_output_visible = True
                 self.create_output_labels()
                 return
+        
+        # Check instruction box hide button
+        if self.instruction_visible and hasattr(self, "instruction_hide_area"):
+            x1, y1, x2, y2 = self.instruction_hide_area
+            if x1 <= event.x <= x2 and y1 <= event.y <= y2:
+                self.instruction_visible = False
+                self.create_instruction_box()
+                return
+        # Check instruction box show tab
+        elif not self.instruction_visible and hasattr(self, "instruction_show_area"):
+            x1, y1, x2, y2 = self.instruction_show_area
+            if x1 <= event.x <= x2 and y1 <= event.y <= y2:
+                self.instruction_visible = True
+                self.create_instruction_box()
+                return
+        
         # Else: pass through to old mouse logic for aircraft control
         self.on_mouse_click(event)
 
@@ -453,9 +477,6 @@ class VORSimulatorGUI:
         self.radials_var = tk.IntVar(value=1)
         tk.Checkbutton(display_frame, text="Show All Radials", variable=self.radials_var, 
                       bg="#d0d0d0", command=self.toggle_radials).pack(side=tk.TOP, anchor=tk.W)
-        self.labels_var = tk.IntVar(value=0)
-        tk.Checkbutton(display_frame, text="Show Radial Labels", variable=self.labels_var, 
-                      bg="#d0d0d0", command=self.toggle_labels).pack(side=tk.TOP, anchor=tk.W)
         
         # Background Options
         if MATPLOTLIB_AVAILABLE:
@@ -568,17 +589,304 @@ class VORSimulatorGUI:
             '''
             m.get_root().html.add_child(folium.Element(legend_html))
             
-            # Save and open the map
+            # Save the map to a temporary file
             temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.html')
             map_path = temp_file.name
             temp_file.close()
-            
             m.save(map_path)
-            webbrowser.open(f'file://{map_path}')
-            print(f"Real-world VOR map opened in browser: {map_path}")
+            
+            # Try to open in embedded window first, fallback to browser
+            if TKINTERWEB_AVAILABLE:
+                self.open_embedded_map(map_path)
+            else:
+                # Show option dialog for users without tkinterweb
+                choice = messagebox.askyesno(
+                    "Map Display Option",
+                    "The map will open in your web browser.\n\n"
+                    "Would you like to install tkinterweb for embedded maps?\n"
+                    "(You can install it later with: pip install tkinterweb)",
+                    icon='question'
+                )
+                if choice:
+                    messagebox.showinfo(
+                        "Installation Instructions", 
+                        "To install tkinterweb for embedded maps:\n\n"
+                        "1. Open Command Prompt or Terminal\n"
+                        "2. Run: pip install tkinterweb\n"
+                        "3. Restart the simulator\n\n"
+                        "For now, the map will open in your browser."
+                    )
+                
+                # Open in browser
+                webbrowser.open(f'file://{map_path}')
+                print(f"Real-world VOR map opened in browser: {map_path}")
             
         except Exception as e:
             print(f"Error creating real-world map: {e}")
+
+    def open_embedded_map(self, map_path):
+        """Open the map in an embedded window with Python 3.12.4 compatibility fixes."""
+        try:
+            import tkinterweb
+            print(f"tkinterweb version: {getattr(tkinterweb, '__version__', 'Unknown')}")
+            
+            # Create a new window for the embedded map
+            map_window = tk.Toplevel(self.root)
+            map_window.title("Real-World VOR Stations Map")
+            map_window.geometry("1200x800")
+            map_window.configure(bg="#2c3e50")
+            
+            # Make window modal and bring to front
+            map_window.transient(self.root)
+            map_window.grab_set()
+            map_window.focus_force()
+            
+            # Center the window
+            map_window.update_idletasks()
+            x = (map_window.winfo_screenwidth() // 2) - (1200 // 2)
+            y = (map_window.winfo_screenheight() // 2) - (800 // 2)
+            map_window.geometry(f"1200x800+{x}+{y}")
+            
+            # Header frame with enhanced styling
+            header_frame = tk.Frame(map_window, bg="#34495e", height=60)
+            header_frame.pack(fill=tk.X)
+            header_frame.pack_propagate(False)
+            
+            title_label = tk.Label(header_frame, text="🗺️ Real-World VOR Stations Map", 
+                                 font=("Arial", 16, "bold"), fg="white", bg="#34495e")
+            title_label.pack(pady=15)
+            
+            # Status frame
+            status_frame = tk.Frame(map_window, bg="#ecf0f1", height=35)
+            status_frame.pack(fill=tk.X)
+            status_frame.pack_propagate(False)
+            
+            status_label = tk.Label(status_frame, text="Initializing map display for Python 3.12.4...", 
+                                   font=("Arial", 10), fg="#7f8c8d", bg="#ecf0f1")
+            status_label.pack(pady=8)
+            
+            # Control buttons frame
+            button_frame = tk.Frame(map_window, bg="#bdc3c7", height=45)
+            button_frame.pack(fill=tk.X)
+            button_frame.pack_propagate(False)
+            
+            # Create buttons with better styling
+            browser_btn = tk.Button(button_frame, text="🌐 Open in Browser", 
+                                   command=lambda: webbrowser.open(f'file://{map_path}'), 
+                                   bg="#3498db", fg="white", font=("Arial", 10, "bold"),
+                                   padx=15, pady=5, relief=tk.FLAT)
+            browser_btn.pack(side=tk.LEFT, padx=10, pady=8)
+            
+            reload_btn = tk.Button(button_frame, text="🔄 Reload Map", 
+                                  command=lambda: self.reload_embedded_map_v2(web_frame, map_path, status_label), 
+                                  bg="#f39c12", fg="white", font=("Arial", 10, "bold"),
+                                  padx=15, pady=5, relief=tk.FLAT)
+            reload_btn.pack(side=tk.LEFT, padx=5, pady=8)
+            
+            close_btn = tk.Button(button_frame, text="❌ Close", command=map_window.destroy, 
+                                 bg="#e74c3c", fg="white", font=("Arial", 10, "bold"),
+                                 padx=15, pady=5, relief=tk.FLAT)
+            close_btn.pack(side=tk.RIGHT, padx=10, pady=8)
+            
+            # Info label
+            info_label = tk.Label(button_frame, text="📋 Map may appear blank in embedded view - use Browser option for full functionality", 
+                                 font=("Arial", 9), fg="#7f8c8d", bg="#bdc3c7")
+            info_label.pack(side=tk.RIGHT, padx=20, pady=8)
+            
+            # Create web frame
+            web_frame = tk.Frame(map_window, bg="white", relief=tk.SUNKEN, bd=1)
+            web_frame.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
+            
+            # Load the map with Python 3.12 compatibility
+            self.load_map_python312_compatible(web_frame, map_path, status_label)
+            
+            print(f"Embedded map window created for: {map_path}")
+            
+        except ImportError as ie:
+            print(f"tkinterweb not available: {ie}")
+            # Fallback to browser
+            webbrowser.open(f'file://{map_path}')
+            messagebox.showinfo("Map Opened", "Map opened in your default browser.\n\nTo view maps embedded in the app, install: pip install tkinterweb")
+            
+        except Exception as e:
+            print(f"Error opening embedded map: {e}")
+            # Fallback to browser
+            webbrowser.open(f'file://{map_path}')
+            messagebox.showerror("Embedded Map Error", f"Could not open embedded map: {str(e)}\n\nMap opened in browser instead.")
+
+    def load_map_python312_compatible(self, web_frame, map_path, status_label):
+        """Load map with enhanced Python 3.12.4 and tkinterweb 4.4.4 compatibility."""
+        import tkinterweb
+        import urllib.parse
+        import urllib.request
+        import time
+        
+        success = False
+        attempt = 1
+        
+        def try_loading_method(method_num, description):
+            nonlocal success
+            if success:
+                return
+                
+            try:
+                status_label.config(text=f"Attempt {method_num}: {description}...")
+                web_frame.update()
+                
+                if method_num == 1:
+                    # Method 1: Enhanced HtmlFrame with WebView2 backend
+                    print("Trying Method 1: Enhanced HtmlFrame with WebView2")
+                    web_view = tkinterweb.HtmlFrame(web_frame, messages_enabled=False)
+                    web_view.pack(fill=tk.BOTH, expand=True)
+                    
+                    # Read HTML and modify for better compatibility
+                    with open(map_path, 'r', encoding='utf-8') as f:
+                        html_content = f.read()
+                    
+                    # Enhance HTML for better rendering
+                    enhanced_html = self.enhance_html_for_embedding(html_content)
+                    
+                    # Load with delay for better initialization
+                    def delayed_load():
+                        try:
+                            web_view.load_html(enhanced_html)
+                            status_label.config(text="Method 1: Map loaded successfully!")
+                            print("Method 1 successful")
+                        except Exception as inner_e:
+                            print(f"Method 1 delayed load failed: {inner_e}")
+                            web_frame.after(100, lambda: try_loading_method(2, "File URL loading"))
+                    
+                    web_frame.after(500, delayed_load)
+                    success = True
+                    
+                elif method_num == 2:
+                    # Method 2: File URL approach
+                    print("Trying Method 2: File URL approach")
+                    for widget in web_frame.winfo_children():
+                        widget.destroy()
+                    
+                    web_view = tkinterweb.HtmlFrame(web_frame, messages_enabled=False)
+                    web_view.pack(fill=tk.BOTH, expand=True)
+                    
+                    # Create proper file URL
+                    file_url = 'file:///' + map_path.replace('\\', '/').replace(' ', '%20')
+                    
+                    def delayed_url_load():
+                        try:
+                            web_view.load_url(file_url)
+                            status_label.config(text="Method 2: File URL loaded successfully!")
+                            print("Method 2 successful")
+                        except Exception as inner_e:
+                            print(f"Method 2 failed: {inner_e}")
+                            web_frame.after(100, lambda: try_loading_method(3, "Alternative HTML loading"))
+                    
+                    web_frame.after(500, delayed_url_load)
+                    success = True
+                    
+                elif method_num == 3:
+                    # Method 3: Simple HTML display with compatibility message
+                    print("Trying Method 3: Compatibility fallback")
+                    for widget in web_frame.winfo_children():
+                        widget.destroy()
+                    
+                    # Create a simple message frame
+                    message_frame = tk.Frame(web_frame, bg="#ffffff")
+                    message_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+                    
+                    # Compatibility notice
+                    title_label = tk.Label(message_frame, text="🔧 Embedded Display Compatibility Notice", 
+                                         font=("Arial", 16, "bold"), fg="#e74c3c", bg="#ffffff")
+                    title_label.pack(pady=(20, 15))
+                    
+                    msg_text = """The embedded map display is experiencing compatibility issues with:
+
+• Python 3.12.4
+• tkinterweb 4.4.4  
+• Current Windows environment
+
+This is a known limitation of the tkinterweb package.
+
+WORKAROUND:
+Click the "🌐 Open in Browser" button above to view the full interactive map.
+
+The browser version includes:
+✓ Interactive VOR station markers with detailed information
+✓ Zoom and pan controls for easy navigation
+✓ Station tooltips with frequencies and identifiers  
+✓ Complete legend and layer controls
+✓ Real-world mapping data"""
+                    
+                    message_label = tk.Label(message_frame, text=msg_text, font=("Arial", 11), 
+                                           fg="#2c3e50", bg="#ffffff", justify=tk.LEFT)
+                    message_label.pack(pady=15)
+                    
+                    # Recommendation box
+                    rec_frame = tk.Frame(message_frame, bg="#d5f4e6", relief=tk.SOLID, bd=1)
+                    rec_frame.pack(fill=tk.X, pady=(20, 10), padx=10)
+                    
+                    rec_label = tk.Label(rec_frame, text="💡 RECOMMENDED: Use the Browser option for optimal experience", 
+                                       font=("Arial", 11, "bold"), fg="#27ae60", bg="#d5f4e6")
+                    rec_label.pack(pady=12)
+                    
+                    status_label.config(text="Compatibility mode - Use browser option above")
+                    success = True
+                    print("Method 3 - compatibility message displayed")
+                    
+            except Exception as e:
+                print(f"Method {method_num} failed: {e}")
+                if method_num < 3:
+                    web_frame.after(100, lambda: try_loading_method(method_num + 1, "Next method"))
+                else:
+                    status_label.config(text="All methods failed - Use browser option")
+        
+        # Start with method 1
+        try_loading_method(1, "Enhanced HtmlFrame loading")
+
+    def enhance_html_for_embedding(self, html_content):
+        """Enhance HTML content for better embedded display compatibility."""
+        # Add viewport and compatibility meta tags
+        enhanced_html = html_content
+        
+        if '<head>' in enhanced_html:
+            # Insert compatibility enhancements
+            compatibility_tags = '''
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <style>
+        body { margin: 0; padding: 0; overflow: hidden; }
+        .folium-map { height: 100vh !important; width: 100vw !important; }
+    </style>'''
+            enhanced_html = enhanced_html.replace('<head>', f'<head>{compatibility_tags}')
+        
+        # Force map to fill container
+        if 'leaflet' in enhanced_html.lower():
+            map_resize_script = '''
+    <script>
+        window.addEventListener('load', function() {
+            setTimeout(function() {
+                if (typeof window.map !== 'undefined') {
+                    window.map.invalidateSize();
+                }
+            }, 1000);
+        });
+    </script>'''
+            enhanced_html = enhanced_html.replace('</body>', f'{map_resize_script}</body>')
+        
+        return enhanced_html
+
+    def reload_embedded_map_v2(self, web_frame, map_path, status_label):
+        """Enhanced reload function for embedded map."""
+        print("Reloading embedded map...")
+        status_label.config(text="Reloading map display...")
+        
+        # Clear existing content
+        for widget in web_frame.winfo_children():
+            widget.destroy()
+        
+        # Reload after brief delay
+        web_frame.after(500, lambda: self.load_map_python312_compatible(web_frame, map_path, status_label))
 
     def show_vor_stations(self):
         """Display a window with VOR station information."""
@@ -740,41 +1048,6 @@ class VORSimulatorGUI:
         self.show_all_radials = bool(self.radials_var.get())
         self.draw_vor_station()  # Redraw VOR with updated radial settings
 
-    def toggle_labels(self):
-        """Toggle display of radial labels."""
-        show_labels = bool(self.labels_var.get())
-        
-        for label in self.radial_labels:
-            self.canvas.delete(label)
-        self.radial_labels.clear()
-        
-        if show_labels:
-            self.draw_radial_labels()
-
-    def draw_radial_labels(self):
-        """Draw labels for major radials (responsive)."""
-        # Convert grid units to canvas pixel units
-        vx, vy = self.grid_to_canvas(self.vor_x, self.vor_y)
-        
-        # Use a radius that depends on the current canvas size
-        width = self.canvas.winfo_width()
-        height = self.canvas.winfo_height()
-        radius = min(width, height) * 0.08  # Example: 8% of smallest screen dimension
-
-        for angle in range(0, 360, 30):
-            label_x = vx + radius * sin(radians(angle))
-            label_y = vy - radius * cos(radians(angle))
-
-            radial_text = f"{angle:03d}\u00b0"
-            label = self.canvas.create_text(
-                label_x, label_y, 
-                text=radial_text,
-                font=("Arial", 8, "bold"),
-                fill="darkblue",
-                tags="radial_label"
-            )
-            self.radial_labels.append(label)
-
     def create_indicators(self):
         self.create_heading_indicator()
         self.create_cdi_indicator()
@@ -815,6 +1088,7 @@ class VORSimulatorGUI:
         self.draw_vor_station()
         self.draw_airplane(self.air_x_val, self.air_y_val, self.airplane_angle)
         self.create_output_labels()
+        self.create_instruction_box()
         self.create_indicators()
         self.update_vor_output()
 
@@ -873,10 +1147,6 @@ class VORSimulatorGUI:
         
         # Initialize the OBS radial line
         self.draw_radial_line(self.obs_angle)
-        
-        # Draw labels if enabled
-        if self.labels_var.get():
-            self.draw_radial_labels()
 
     def draw_radial_line(self, obs_angle):
         """Draw a radial line from the VOR based on the OBS setting."""
@@ -993,6 +1263,9 @@ class VORSimulatorGUI:
         # This creates symmetrical functionality for the other side of the VOR
         reciprocal_angle = (obs_angle + 180) % 360
         draw_single_cone(reciprocal_angle, center_color="blue", cone_type="reciprocal")
+
+        # Create another VOR on the right side of the screen lower part
+
 
     def get_indicator_positions(self):
         width = self.canvas.winfo_width()
@@ -1202,6 +1475,100 @@ class VORSimulatorGUI:
             )
             self.vor_output_panel_items = [self.vor_show_tab, show_text]
             self.vor_output_show_area = (tab_x1, tab_y1, tab_x2, tab_y2)
+
+    def create_instruction_box(self):
+        """Create instruction box in upper right corner with hide/show functionality."""
+        # Remove existing instruction panel items
+        if hasattr(self, 'instruction_panel_items'):
+            for item in self.instruction_panel_items:
+                self.canvas.delete(item)
+        self.instruction_panel_items = []
+        if hasattr(self, 'instruction_show_tab') and self.instruction_show_tab:
+            self.canvas.delete(self.instruction_show_tab)
+            self.instruction_show_tab = None
+
+        width = self.canvas.winfo_width()
+        height = self.canvas.winfo_height()
+        
+        # Position in upper right corner, below the VOR output panel
+        margin = 20
+        panel_width = int(0.25 * width)
+        panel_height = int(0.25 * height)
+        
+        # Position below VOR output panel with some spacing
+        vor_panel_bottom = margin + int(0.17 * height) + 15  # VOR panel height + spacing
+        x1 = width - panel_width - margin
+        y1 = vor_panel_bottom
+        x2 = width - margin
+        y2 = vor_panel_bottom + panel_height
+
+        self.instruction_panel_geom = (x1, y1, x2, y2)  # For redrawing/resizing
+
+        if getattr(self, 'instruction_visible', True):
+            # Main instruction panel
+            panel_bg = self.canvas.create_rectangle(
+                x1, y1, x2, y2, fill="#f0f8ff", outline="#4169e1", width=2
+            )
+            
+            # Title bar
+            title_bg = self.canvas.create_rectangle(
+                x1, y1, x2, y1+25, fill="#4169e1", outline="#4169e1"
+            )
+            title_text = self.canvas.create_text(
+                x1+10, y1+12, anchor="w", text="🎯 VOR Simulator Instructions",
+                font=("Arial", 10, "bold"), fill="white"
+            )
+            
+            # "Hide" button on left edge, vertical
+            hide_btn = self.canvas.create_rectangle(
+                x1-35, y1, x1, y1+60, fill="#ffe4e1", outline="#4169e1"
+            )
+            hide_text = self.canvas.create_text(
+                x1-18, y1+30, text="Hide", angle=90,
+                font=("Arial", 10, "bold"), fill="#4169e1"
+            )
+            
+            # Instruction content
+            instruction_content = """AIRCRAFT CONTROLS:
+• Arrow Keys: Move aircraft
+• Mouse: Click & drag to move
+• A/D Keys: Rotate OBS (±5°)
+• Q/E Keys: Fine OBS (±1°)
+• R Key: Reset simulation
+
+VOR NAVIGATION:
+• Watch CDI needle deflection
+• Center needle = on radial
+• OBS sets selected radial"""
+            
+            # Result text area
+            instruction_text = self.canvas.create_text(
+                x1+10, y1+35, anchor="nw", text=instruction_content,
+                font=("Arial", 10, "bold"), fill="black", width=(x2-x1-20)
+            )
+            
+            self.instruction_panel_items = [panel_bg, title_bg, title_text, hide_btn, hide_text, instruction_text]
+            self.instruction_hide_area = (x1-35, y1, x1, y1+60)
+        else:
+            # "Show" tab, blue, right edge
+            tab_width = 45
+            tab_height = 80
+            tab_x1 = width - tab_width - 10
+            tab_x2 = width - 10
+            # Position below VOR show tab if VOR panel is hidden
+            vor_tab_bottom = margin + 80 + 15 if not getattr(self, 'vor_output_visible', True) else vor_panel_bottom
+            tab_y1 = vor_tab_bottom
+            tab_y2 = vor_tab_bottom + tab_height
+            
+            self.instruction_show_tab = self.canvas.create_rectangle(
+                tab_x1, tab_y1, tab_x2, tab_y2, fill="#e6f3ff", outline="#4169e1"
+            )
+            show_text = self.canvas.create_text(
+                tab_x1 + tab_width // 2, tab_y1 + tab_height // 2,
+                text="Help", angle=90, font=("Arial", 10, "bold"), fill="#4169e1"
+            )
+            self.instruction_panel_items = [self.instruction_show_tab, show_text]
+            self.instruction_show_area = (tab_x1, tab_y1, tab_x2, tab_y2)
 
 
     def create_indicators(self):
