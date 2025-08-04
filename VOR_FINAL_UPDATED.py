@@ -917,7 +917,7 @@ class VORSimulatorGUI:
         
         self.recip_radial_line = self.canvas.create_line(
             vx, vy, recip_end_x, recip_end_y,
-            fill="Blue", width=2, 
+            fill="Red", width=2, 
             tags="radial_line"
         )
         
@@ -965,15 +965,31 @@ class VORSimulatorGUI:
             left_end_x = vx + length * sin(left_angle)
             left_end_y = vy - length * cos(left_angle)
             left_boundary = self.canvas.create_line(vx, vy, left_end_x, left_end_y,
-                                                    fill="green", width=2, tags="triangular_gradient")
+                                                    fill=side_color, width=2, tags="triangular_gradient")
 
             # Calculate end points for right boundary of the cone
             right_end_x = vx + length * sin(right_angle)
             right_end_y = vy - length * cos(right_angle)
             right_boundary = self.canvas.create_line(vx, vy, right_end_x, right_end_y,
-                                                    fill="green", width=2, tags="triangular_gradient")
+                                                    fill=side_color, width=2, tags="triangular_gradient")
 
-            # Store all cone elements for later deletion (no polygon outline)
+            # Add flexible cone fill that extends to screen edges for better visualization
+            if cone_type == "main":
+                # Draw only the cone outline for the main cone (no fill)
+                cone_fill = self.canvas.create_polygon(
+                    vx, vy, left_end_x, left_end_y, right_end_x, right_end_y,
+                    fill="", outline=center_color, width=2, tags="triangular_gradient"
+                )
+                self.triangular_gradient.append(cone_fill)
+            else:
+                # Draw only the cone outline for the reciprocal cone (no fill)
+                cone_fill = self.canvas.create_polygon(
+                    vx, vy, left_end_x, left_end_y, right_end_x, right_end_y,
+                    fill="", outline=center_color, width=2, tags="triangular_gradient"
+                )
+                self.triangular_gradient.append(cone_fill)
+
+            # Store all cone elements for later deletion
             self.triangular_gradient.extend([center_line, left_boundary, right_boundary])
 
         # Draw main cone (current OBS setting) - represents the selected radial
