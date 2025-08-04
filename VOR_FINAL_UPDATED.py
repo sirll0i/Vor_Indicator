@@ -7,6 +7,7 @@ import sys
 import subprocess
 import webbrowser
 import tempfile
+import math
 
 # Try to import pygame for joystick support
 try:
@@ -1012,26 +1013,133 @@ class VORSimulatorGUI:
 
     
     def load_airplane_image(self):
-        """Loads or creates a bigger airplane image."""
+        """Loads a custom airplane image if available, otherwise creates a realistic top-down airplane."""
         try:
             script_dir = os.path.dirname(os.path.abspath(__file__))
-            airplane_path = os.path.join(script_dir, "airplane_icon.png")
+            airplane_path = os.path.join(script_dir, "airplane_icon0.png")#change 
             if os.path.exists(airplane_path):
-                self.base_airplane_image = Image.open(airplane_path).resize((140, 140)).convert("RGBA")
+                img = Image.open(airplane_path)
+                # Auto-resize to 140x140 (adjust if your drawing is a different size)
+                self.base_airplane_image = img.resize((70, 70), Image.LANCZOS).convert("RGBA")
+                print("Loaded custom airplane image from file.")
             else:
                 self.base_airplane_image = self.create_airplane_image()
-        except Exception:
+                print("No airplane_icon.png found; using generated airplane image.")
+        except Exception as e:
+            print(f"Error loading airplane image, using default. Reason: {e}")
             self.base_airplane_image = self.create_airplane_image()
 
-    def create_airplane_image(self):
-        """Creates a bigger airplane icon if the image file is not found."""
-        img = Image.new('RGBA', (90, 90), (0, 0, 0, 0))
+
+    def create_airplane_image(self, propeller_angle=0):
+        """
+        Creates a more realistic top-down airplane icon with shading, windows, and twin propellers.
+        propeller_angle: The angle of the propeller blades (for animation).
+        Returns a PIL Image (RGBA).
+        """
+        size = 95
+        img = Image.new('RGBA', (size, size), (0, 0, 0, 0))
         draw = ImageDraw.Draw(img)
-        points = [(50, 20), (40, 60), (50, 70), (60, 80)]
-        draw.polygon(points, fill='red', outline='darkred', width=2)
-        draw.rectangle([30, 46, 70, 54], fill='red', outline='darkred')
-        draw.rectangle([45, 75, 55, 85], fill='red', outline='darkred')
+
+        # Fuselage (main body, shaded silver/gray)
+        body_width = size * 0.14
+        body_length = size * 0.70
+        body_x0 = (size - body_width) / 2
+        body_y0 = size * 0.13
+        body_x1 = (size + body_width) / 2
+        body_y1 = body_y0 + body_length
+        draw.rounded_rectangle([body_x0, body_y0, body_x1, body_y1], radius=body_width/2, fill="#d0d8dd", outline="#888", width=3)
+
+        # Cockpit (front window, blue/gray ellipse)
+        cockpit_y = body_y0 + size * 0.07
+        cockpit_h = size * 0.11
+        draw.ellipse([
+            body_x0 + body_width * 0.1, 
+            cockpit_y, 
+            body_x1 - body_width * 0.1, 
+            cockpit_y + cockpit_h
+        ], fill="#7ec7e6", outline="#6ca0c9", width=2)
+
+        # Wings (main, metallic gray)
+        wing_span = size * 0.85
+        wing_y = body_y0 + body_length * 0.36
+        wing_h = size * 0.17
+        wing_x0 = (size - wing_span) / 2
+        wing_x1 = (size + wing_span) / 2
+        draw.polygon([
+            (wing_x0, wing_y + wing_h/2),
+            (size/2, wing_y - wing_h/2),
+            (wing_x1, wing_y + wing_h/2),
+            (size/2, wing_y + wing_h),
+        ], fill="#b3b7b9", outline="#888", width=3)
+
+        # Engine pods (left/right under wings)
+        engine_radius = size * 0.065
+        engine_offset = size * 0.24
+        engine_centers = []
+        for side in [-1, 1]:
+            ex = size/2 + side * engine_offset
+            ey = wing_y + wing_h * 0.73
+            draw.ellipse([
+                ex - engine_radius, ey - engine_radius, ex + engine_radius, ey + engine_radius
+            ], fill="#666", outline="#333", width=2)
+            engine_centers.append((ex, ey))
+
+        # Tail (vertical stabilizer)
+        tail_y0 = body_y1 - size * 0.12
+        tail_y1 = tail_y0 - size * 0.12
+        tail_w = body_width * 0.9
+        draw.polygon([
+            (size/2 - tail_w/2, tail_y0),
+            (size/2, tail_y1),
+            (size/2 + tail_w/2, tail_y0)
+        ], fill="#8ca6b3", outline="#455963", width=2)
+
+        # Horizontal stabilizer (tail wings)
+        stab_span = size * 0.37
+        stab_y = tail_y0 + size * 0.04
+        stab_h = size * 0.045
+        draw.rectangle([
+            size/2 - stab_span/2, stab_y,
+            size/2 + stab_span/2, stab_y + stab_h
+        ], fill="#b3b7b9", outline="#888", width=2)
+
+        # Windows (dark gray, cockpit and passenger)
+        win_w = size * 0.07
+        win_h = size * 0.03
+        win_gap = size * 0.09
+        n_windows = 3
+        for i in range(n_windows):
+            win_y = body_y0 + size * 0.18 + i * win_gap
+            draw.ellipse([
+                size/2 - win_w/2, win_y,
+                size/2 + win_w/2, win_y + win_h
+            ], fill="#1a1a1a", outline="#1a1a1a")
+        
+        # Outline shadow (simulate drop shadow)
+        shadow = Image.new('RGBA', img.size, (0,0,0,0))
+        shadow_draw = ImageDraw.Draw(shadow)
+        shadow_draw.rounded_rectangle([body_x0+4, body_y0+7, body_x1+4, body_y1+7], radius=body_width/2, fill=(0,0,0,50))
+        img = Image.alpha_composite(shadow, img)
+
+        # --- Twin minimalist propellers (on engine centers) ---
+        for ex, ey in engine_centers:
+            prop_len = size * 0.14
+            prop_width = int(size * 0.028)
+            # Draw two blades, 90deg apart, rotated by propeller_angle
+            for blade_angle in [0, 90]:
+                theta = math.radians(propeller_angle + blade_angle)
+                x1 = ex + prop_len * math.cos(theta)
+                y1 = ey + prop_len * math.sin(theta)
+                x2 = ex - prop_len * math.cos(theta)
+                y2 = ey - prop_len * math.sin(theta)
+                draw.line([x1, y1, ex, ey, x2, y2], fill="#c7b170", width=prop_width)
+            # Draw hub (silver circle)
+            hub_r = size * 0.025
+            draw.ellipse([ex - hub_r, ey - hub_r, ex + hub_r, ey + hub_r], fill="#ededed", outline="#aaa", width=1)
+
         return img
+
+
 
     def create_output_labels(self):
         # Remove existing panel items
