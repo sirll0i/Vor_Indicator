@@ -484,15 +484,18 @@ class VORSimulatorGUI:
         tk.Checkbutton(display_frame, text="Show All Radials", variable=self.radials_var, 
                       bg="#d0d0d0", command=self.toggle_radials).pack(side=tk.TOP, anchor=tk.W)
         
-        # Background Options
+        # Background Options - Single Toggle Button
         if MATPLOTLIB_AVAILABLE:
             background_frame = tk.Frame(control_frame, bg="#d0d0d0")
             background_frame.pack(side=tk.LEFT, padx=20, pady=5)
             tk.Label(background_frame, text="Background:", bg="#d0d0d0", font=("Arial", 10, "bold")).pack(side=tk.TOP)
-            tk.Button(background_frame, text="Radar Style", command=lambda: self.apply_matplotlib_background('radar'), 
-                     bg="#ff9999", font=("Arial", 9), width=12).pack(side=tk.TOP, pady=1)
-            tk.Button(background_frame, text="Default Image", command=self.restore_default_background, 
-                     bg="#ffff99", font=("Arial", 9), width=12).pack(side=tk.TOP, pady=1)
+            
+            # Initialize background state
+            self.current_bg_mode = "default"  # default, radar, navigation, simple
+            self.bg_toggle_button = tk.Button(background_frame, text="Switch to Radar", 
+                                            command=self.toggle_background, 
+                                            bg="#ff9999", font=("Arial", 10, "bold"), width=14)
+            self.bg_toggle_button.pack(side=tk.TOP, pady=2)
         
         # Compass Launch Button
         compass_frame = tk.Frame(control_frame, bg="#d0d0d0")
@@ -1006,6 +1009,23 @@ The browser version includes:
         vor_id = selection.split(' - ')[0]  # Extract VOR ID
         self.load_vor_station(vor_id)
 
+
+    def toggle_background(self):
+        """Toggle between radar and default background only."""
+        if not MATPLOTLIB_AVAILABLE:
+            messagebox.showinfo("Feature Unavailable", 
+                              "Matplotlib is not available. Install with: pip install matplotlib")
+            return
+        
+        # Toggle between only two modes: default and radar
+        if self.current_bg_mode == "default":
+            self.current_bg_mode = "radar"
+            self.bg_toggle_button.config(text="Switch to Default", bg="#99ff99")
+            self.apply_matplotlib_background('radar')
+        else:
+            self.current_bg_mode = "default"
+            self.bg_toggle_button.config(text="Switch to Radar", bg="#ff9999")
+            self.restore_default_background()
 
     def apply_matplotlib_background(self, style='simple'):
         """Apply a matplotlib-generated background to the canvas."""
