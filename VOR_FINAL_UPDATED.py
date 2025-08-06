@@ -10,6 +10,8 @@ import tempfile
 import urllib.parse
 import urllib.request
 import math
+from controller_bindings import ControllerHandler
+
 
 # Try to import pygame for joystick support
 try:
@@ -403,6 +405,16 @@ class VORSimulatorGUI:
         self.movement_loop()
         self.draw_airplane(self.air_x_val, self.air_y_val, self.airplane_angle)
         self.update_vor_output()
+        #control bind
+        self.controller = ControllerHandler(
+            button_map={
+                0: self.joy_reset,            # A
+                2: self.joy_rotate_obs_left,  # X
+                3: self.joy_rotate_obs_right, # Y
+            },
+            axis_callback=self.joy_axes,
+            hat_callback=self.joy_hat
+        )
 
     def on_canvas_click(self, event):
         # Check VOR output hide button
@@ -1995,9 +2007,9 @@ VOR NAVIGATION:
             return 0, 0
 
     def movement_loop(self):
-        """A continuous loop for handling aircraft movement from keyboard, mouse, and joystick."""
+        """A continuous loop for handling aircraft movement from keyboard, mouse, joystick, and controller bindings."""
         dx = dy = 0
-        
+
         # Keyboard input (existing functionality)
         if "Left" in self.pressed_keys:
             dx -= 1
@@ -2016,11 +2028,16 @@ VOR NAVIGATION:
                 dy += joy_dy * 0.8
                 print(f"Moving airplane with joystick: dx={dx:.3f}, dy={dy:.3f}")
 
+        # Controller bindings: poll for button/hat/axis events
+        if hasattr(self, 'controller'):
+            self.controller.poll()
+
         # Apply movement if any input detected
         if dx != 0 or dy != 0:
             self.move_airplane(dx, dy)
 
         self.root.after(50, self.movement_loop)
+
 
     def update_vor_output(self):
         try:
@@ -2079,6 +2096,28 @@ VOR NAVIGATION:
         except Exception as e:
             if getattr(self, 'vor_output_visible', True) and hasattr(self, 'result_text'):
                 self.canvas.itemconfig(self.result_text, text=f"Error: {str(e)}")
+
+    def joy_reset(self):
+        self.reset_simulation()
+
+    def joy_rotate_obs_left(self):
+        self.rotate_obs(-5)
+
+    def joy_rotate_obs_right(self):
+        self.rotate_obs(5)
+
+    def joy_axes(self, axes):
+        deadzone = 0.15
+        dx = axes[0] if abs(axes[0]) > deadzone else 0
+        dy = axes[1] if abs(axes[1]) > deadzone else 0
+        if dx != 0 or dy != 0:
+            self.move_airplane(dx * 0.8, dy * 0.8)
+
+    def joy_hat(self, hat):
+        if hat[0] == -1:
+            self.rotate_obs(-1)
+        if hat[0] == 1:
+            self.rotate_obs(1)
 
 
 
