@@ -300,6 +300,11 @@ class VORSimulatorGUI:
         self.vor_output_visible = True
         self.vor_output_panel_items = []
         self.vor_show_tab = None
+
+        #for main window
+        self.vor_window = None  # Track the VOR station window
+        self.awaiting_exit_confirm = False  # Track if we are confirming exit
+
         
         # Instruction box visibility
         self.instruction_visible = True
@@ -408,9 +413,18 @@ class VORSimulatorGUI:
         #control bind
         self.controller = ControllerHandler(
             button_map={
-                0: self.joy_reset,            # A
-                2: self.joy_rotate_obs_left,  # X
-                3: self.joy_rotate_obs_right, # Y
+                0: self.joy_a,           # A
+                1: self.joy_b,           # B
+                3: self.joy_x,           # X
+                4: self.joy_y,           # Y
+                6: self.joy_l1,          # L1
+                7: self.joy_r1,          # R1
+                8: self.joy_l2,          # L2
+                9: self.joy_r2,          # R2
+                10: self.joy_select,     # SELECT
+                11: self.joy_start,      # START
+                13: self.joy_l3,         # L3
+                14: self.joy_r3,         # R3
             },
             axis_callback=self.joy_axes,
             hat_callback=self.joy_hat
@@ -907,33 +921,38 @@ The browser version includes:
         web_frame.after(500, lambda: self.load_map_python312_compatible(web_frame, map_path, status_label))
 
     def show_vor_stations(self):
-        """Display a window with VOR station information."""
-        if not FOLIUM_AVAILABLE:
-            print("Folium not available.")
+        if self.vor_window and self.vor_window.winfo_exists():
+            self.vor_window.lift()
             return
-            
+
         # Create a new window for VOR station list
-        vor_window = tk.Toplevel(self.root)
-        vor_window.title("Real VOR Stations Database")
-        vor_window.geometry("600x500")
-        vor_window.configure(bg="#f0f0f0")
-        
+        self.vor_window = tk.Toplevel(self.root)
+        self.vor_window.title("Real VOR Stations Database")
+        self.vor_window.geometry("600x500")
+        self.vor_window.configure(bg="#f0f0f0")
+
+        # Ensure window closes properly
+        def on_close():
+            self.vor_window.destroy()
+            self.vor_window = None
+        self.vor_window.protocol("WM_DELETE_WINDOW", on_close)
+
         # Create a scrollable text widget
-        text_frame = tk.Frame(vor_window, bg="#f0f0f0")
+        text_frame = tk.Frame(self.vor_window, bg="#f0f0f0")
         text_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-        
+
         scrollbar = tk.Scrollbar(text_frame)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        
-        text_widget = tk.Text(text_frame, yscrollcommand=scrollbar.set, 
-                             font=("Courier", 10), bg="white")
+
+        text_widget = tk.Text(text_frame, yscrollcommand=scrollbar.set,
+                            font=("Courier", 10), bg="white")
         text_widget.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.config(command=text_widget.yview)
-        
+
         # Format VOR station information
         vor_info = "REAL VOR STATIONS DATABASE\n"
         vor_info += "=" * 50 + "\n\n"
-        
+
         # Group by country
         countries = {}
         for vor_id, station in REAL_VOR_STATIONS.items():
@@ -941,17 +960,16 @@ The browser version includes:
             if country not in countries:
                 countries[country] = []
             countries[country].append((vor_id, station))
-        
+
         for country in sorted(countries.keys()):
             vor_info += f"{country.upper()}\n"
             vor_info += "-" * len(country) + "\n"
-            
             for vor_id, station in sorted(countries[country]):
                 vor_info += f"{vor_id:4} - {station['name']:<25} "
                 vor_info += f"Freq: {station['freq']:<6} MHz "
                 vor_info += f"({station['lat']:8.4f}, {station['lon']:9.4f})\n"
             vor_info += "\n"
-        
+
         # Add usage instructions
         vor_info += "\nUSAGE INSTRUCTIONS:\n"
         vor_info += "=" * 20 + "\n"
@@ -962,21 +980,22 @@ The browser version includes:
         vor_info += "5. Frequencies are in MHz (VHF range 108-118 MHz)\n\n"
         vor_info += "Note: This simulator uses grid coordinates (0-100), but you can\n"
         vor_info += "reference real VOR stations for authentic navigation scenarios."
-        
+
         text_widget.insert(tk.END, vor_info)
         text_widget.config(state=tk.DISABLED)  # Make read-only
-        
+
         # Add buttons
-        button_frame = tk.Frame(vor_window, bg="#f0f0f0")
+        button_frame = tk.Frame(self.vor_window, bg="#f0f0f0")
         button_frame.pack(fill=tk.X, padx=10, pady=5)
-        
-        tk.Button(button_frame, text="Open Real-World Map", 
-                 command=self.open_real_world_map, bg="#66ff66", 
-                 font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=5)
-        
-        tk.Button(button_frame, text="Close", 
-                 command=vor_window.destroy, bg="#ffaa66", 
-                 font=("Arial", 10, "bold")).pack(side=tk.RIGHT, padx=5)
+
+        tk.Button(button_frame, text="Open Real-World Map",
+                command=self.open_real_world_map, bg="#66ff66",
+                font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=5)
+
+        tk.Button(button_frame, text="Close",
+                command=on_close, bg="#ffaa66",
+                font=("Arial", 10, "bold")).pack(side=tk.RIGHT, padx=5)
+
 
     def load_vor_station(self, vor_id):
         """Load a real VOR station's data into the simulator."""
@@ -2117,27 +2136,233 @@ VOR NAVIGATION:
             if getattr(self, 'vor_output_visible', True) and hasattr(self, 'result_text'):
                 self.canvas.itemconfig(self.result_text, text=f"Error: {str(e)}")
 
-    def joy_reset(self):
+    def joy_a(self):
+        # LOAD VOR STATIONS / TOGGLE OFF
+        if self.vor_window and self.vor_window.winfo_exists():
+            self.close_vor_stations()
+        else:
+            self.show_vor_stations()
+
+    def joy_b(self):
+        # SWITCH TO RADAR
+        self.toggle_background()
+
+    def joy_x(self):
+        # X button pressed: Show exit confirmation, or cancel if already showing
+        print("joy_x called!")
+        if getattr(self, '_in_exit_confirmation', False):
+            # Cancel exit (close popup only)
+            if getattr(self, 'confirm_exit_window', None):
+                self.confirm_exit_window.destroy()
+            self._in_exit_confirmation = False
+        else:
+            # Show confirmation popup
+            self.show_exit_confirmation()
+
+    def joy_y(self):
+        # Y button pressed: Confirm exit only if popup is shown
+        if getattr(self, '_in_exit_confirmation', False):
+            self.confirm_exit()
+
+
+    def show_exit_confirmation(self):
+        # Only one confirmation at a time
+        if getattr(self, 'confirm_exit_window', None) and self.confirm_exit_window.winfo_exists():
+            self.confirm_exit_window.lift()
+            return
+
+        self.confirm_exit_window = tk.Toplevel(self.root)
+        self.confirm_exit_window.title("Confirm Exit")
+        self.confirm_exit_window.geometry("350x170")
+        self.confirm_exit_window.configure(bg="#f8f8f8")
+        self.confirm_exit_window.transient(self.root)
+        self.confirm_exit_window.grab_set()  # Make modal
+        self.confirm_exit_window.protocol("WM_DELETE_WINDOW", self.cancel_exit)  # Manual close
+
+        tk.Label(self.confirm_exit_window,
+                text="Return to Landing Screen?\n\nY = YES    X = NO",
+                font=("Arial", 13, "bold"),
+                bg="#f8f8f8",
+                fg="#283b4d",
+                wraplength=320
+                ).pack(pady=(28, 18))
+
+        btn_frame = tk.Frame(self.confirm_exit_window, bg="#f8f8f8")
+        btn_frame.pack(pady=(0, 10))
+        yes_btn = tk.Button(btn_frame, text="YES (Y)", font=("Arial", 12, "bold"),
+                            bg="#4CAF50", fg="white", width=10, command=self.confirm_exit)
+        no_btn = tk.Button(btn_frame, text="NO (X)", font=("Arial", 12, "bold"),
+                        bg="#f44336", fg="white", width=10, command=self.cancel_exit)
+        yes_btn.pack(side=tk.LEFT, padx=14)
+        no_btn.pack(side=tk.LEFT, padx=14)
+
+        self._in_exit_confirmation = True
+        self.poll_confirm_exit_controller()
+
+    def confirm_exit(self):
+        if getattr(self, 'confirm_exit_window', None):
+            self.confirm_exit_window.destroy()
+        self._in_exit_confirmation = False
+        self.return_to_landing_form()
+
+    def cancel_exit(self):
+        if getattr(self, 'confirm_exit_window', None):
+            self.confirm_exit_window.destroy()
+        self._in_exit_confirmation = False
+
+    def poll_confirm_exit_controller(self):
+        if not getattr(self, '_in_exit_confirmation', False):
+            return
+        try:
+            import pygame
+            pygame.event.pump()
+            if self.joystick:
+                # Print the whole button array for diagnosis
+                print("Joystick states:", [self.joystick.get_button(i) for i in range(self.joystick.get_numbuttons())])
+                # Replace 3 and 4 with the indexes that light up for X and Y!
+                if self.joystick.get_button(4):  # Try 2, 3, 4, etc.
+                    print("Y button pressed!")
+                    self.confirm_exit()
+                    return
+                if self.joystick.get_button(3):
+                    print("X button pressed!")
+                    self.cancel_exit()
+                    return
+        except Exception as e:
+            print(f"poll_confirm_exit_controller error: {e}")
+        if getattr(self, 'confirm_exit_window', None) and self.confirm_exit_window.winfo_exists():
+            self.root.after(100, self.poll_confirm_exit_controller)
+
+
+
+
+    def close_vor_stations(self):
+        try:
+            if self.vor_window and self.vor_window.winfo_exists():
+                self.vor_window.destroy()
+                self.vor_window = None
+        except Exception:
+            self.vor_window = None
+
+
+    def joy_r1(self):
+        self.vor_output_visible = not self.vor_output_visible
+        self.create_output_labels()
+
+    def joy_r2(self):
+        self.instruction_visible = not self.instruction_visible
+        self.create_instruction_box()
+
+    def joy_l1(self):
+        self.active_vor = 1
+        self.active_vor_var.set(1)
+        self.redraw_all()
+
+    def joy_l2(self):
+        self.active_vor = 2
+        self.active_vor_var.set(2)
+        self.redraw_all()
+
+    def joy_start(self):
         self.reset_simulation()
 
-    def joy_rotate_obs_left(self):
-        self.rotate_obs(-5)
+    def joy_select(self):
+        self.show_all_radials = not self.show_all_radials
+        self.radials_var.set(int(self.show_all_radials))
+        self.draw_vor_station()  # Redraw to show/hide all radials
 
-    def joy_rotate_obs_right(self):
-        self.rotate_obs(5)
+    def joy_l3(self):
+        pass  # Reserved or assign if needed
 
-    def joy_axes(self, axes):
-        deadzone = 0.15
-        dx = axes[0] if abs(axes[0]) > deadzone else 0
-        dy = axes[1] if abs(axes[1]) > deadzone else 0
-        if dx != 0 or dy != 0:
-            self.move_airplane(dx * 0.8, dy * 0.8)
+    def joy_r3(self):
+        pass  # Reserved or assign if needed
 
     def joy_hat(self, hat):
-        if hat[0] == -1:
-            self.rotate_obs(-1)
-        if hat[0] == 1:
+        # hat = (x, y)
+        if hat == (1, 0):    # D-PAD RIGHT
+            self.rotate_obs(5)
+        elif hat == (-1, 0): # D-PAD LEFT
+            self.rotate_obs(-5)
+        elif hat == (0, -1): # D-PAD DOWN
             self.rotate_obs(1)
+        elif hat == (0, 1):  # D-PAD UP
+            self.rotate_obs(-1)
+
+    def joy_axes(self, axes):
+        # Left stick (axes 0, 1, 2) for aircraft movement
+        deadzone = 0.15
+        dx = axes[0] if len(axes) > 0 and abs(axes[0]) > deadzone else 0
+        dy = axes[1] if len(axes) > 1 and abs(axes[1]) > deadzone else 0
+        if dx != 0 or dy != 0:
+            self.move_airplane(dx * 0.8, dy * 0.8)
+        # Right stick (axes 3, 4, 5) for speed control
+        if len(axes) > 3 and abs(axes[3]) > deadzone:
+            # Map right stick X/Y to speed (customize as you wish)
+            # Example: axes[3] (right stick x) increases/decreases speed
+            # Clamp between min and max
+            self.speed += axes[3] * 0.02
+            self.speed = max(0.1, min(2.0, self.speed))
+            self.speed_scale.set(self.speed)
+        if len(axes) > 4 and abs(axes[4]) > deadzone:
+            self.speed += axes[4] * 0.02
+            self.speed = max(0.1, min(2.0, self.speed))
+            self.speed_scale.set(self.speed)
+        if len(axes) > 5 and abs(axes[5]) > deadzone:
+            self.speed += axes[5] * 0.02
+            self.speed = max(0.1, min(2.0, self.speed))
+            self.speed_scale.set(self.speed)
+
+    def return_to_landing_form(self):
+        try:
+            import subprocess
+            import sys
+            import os
+
+            # Find the directory of this script
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            landing_path = os.path.join(script_dir, "landing-form.py")
+            if os.path.exists(landing_path):
+                subprocess.Popen([sys.executable, landing_path])
+            else:
+                print("landing_form.py not found in directory:", script_dir)
+        except Exception as e:
+            print(f"Error launching landing form: {e}")
+        finally:
+            # Always close this window/app after attempting to launch
+            self.root.destroy()
+
+    def confirm_exit(self):
+        if getattr(self, 'confirm_exit_window', None):
+            self.confirm_exit_window.destroy()
+            self._in_exit_confirmation = False
+            self.return_to_landing_form()
+
+    def cancel_exit(self):
+        if getattr(self, 'confirm_exit_window', None):
+            self.confirm_exit_window.destroy()
+            self._in_exit_confirmation = False
+
+    def poll_confirm_exit_controller(self):
+        # Only poll if window is still open and we are in confirmation mode
+        if not getattr(self, '_in_exit_confirmation', False):
+            return
+        try:
+            import pygame
+            pygame.event.pump()
+            if self.joystick:
+                # Y button (4) = YES
+                if self.joystick.get_button(4):
+                    self.confirm_exit()
+                    return
+                # X button (3) = NO
+                if self.joystick.get_button(3):
+                    self.cancel_exit()
+                    return
+        except Exception as e:
+            pass
+        # Poll again after 100ms
+        if getattr(self, 'confirm_exit_window', None) and self.confirm_exit_window.winfo_exists():
+            self.root.after(100, self.poll_confirm_exit_controller)
 
 
 

@@ -15,10 +15,11 @@ class LandingForm:
         self.root.title("VOR Navigation Simulator")
         self.root.geometry("800x600")
         self.root.configure(bg="#f0f2f5")
+        self._last_button_states = {}
         
         # Set app icon if available
         try:
-            self.root.iconbitmap("icon.ico")  # Add an actual icon file if available
+            self.root.iconbitmap("icon.ico")
         except:
             pass
         
@@ -55,90 +56,76 @@ class LandingForm:
                 self.poll_joystick()
         else:
             print("No joystick detected. Please connect a controller and restart.")
-            # Keep checking for joystick connection
             self.root.after(2000, self.check_joystick_connection)
       
     def poll_joystick(self):
-        """Poll the joystick for button presses and right stick for scrolling."""
+        """Robust polling for all button events, no 'return' except for exit/start."""
         if not self.joystick or not self.poll_joystick_active:
-            self.root.after(100, self.poll_joystick)  # Keep polling even when inactive
+            self.root.after(100, self.poll_joystick)
             return
-            
-        # CODE TO TEST IF INDEX IS SELECTED CORRECTLY - Enable this to debug
-        for i in range(self.joystick.get_numbuttons()):
-            if self.joystick.get_button(i):
-                print(f"Button {i} is pressed")
-        try:
-            pygame.event.pump()  # Needed to process joystick events
-            
-            current_time = time.time()
-            
-            # Debounce - prevent rapid button presses
-            if current_time - self.last_button_press < 0.3:  # 300ms debounce
-                self.root.after(100, self.poll_joystick)
-                return
 
-            # Y button (index 4) - Start Simulator
-            if self.joystick.get_button(4):
-                print("Y button pressed - Starting Simulator")
-                self.last_button_press = current_time
-                self.poll_joystick_active = False
-                self.launch_simulator()
-                return
-          
-            # A button (index 0) - About Projects
-            if self.joystick.get_button(0):
-                print("A button pressed - About Projects")
-                self.last_button_press = current_time
-                self.show_about_us()
-                return
-            
-            # X button (index 3) - Exit
-            if self.joystick.get_button(3):
-                print("X button pressed - Exit")
-                self.last_button_press = current_time
-                self.root.destroy()
-                return
-            
-            # B button (index 1) - Back (only works in About section)
-            if self.joystick.get_button(1):
-                print("B button pressed - Back")
-                if hasattr(self, '_in_about_section') and self._in_about_section:
-                    self.last_button_press = current_time
-                    self._in_about_section = False  # Reset the flag
-                    self.show_main_menu()
+        pygame.event.pump()
+        n_buttons = self.joystick.get_numbuttons()
+
+        # Setup the last_button_states dict
+        if not hasattr(self, "_last_button_states") or len(self._last_button_states) != n_buttons:
+            self._last_button_states = {i: False for i in range(n_buttons)}
+
+        for idx in range(n_buttons):
+            pressed = bool(self.joystick.get_button(idx))
+            was_pressed = self._last_button_states.get(idx, False)
+            just_pressed = pressed and not was_pressed
+
+            if just_pressed:
+                # Y (4): Start Simulator
+                if idx == 4:
+                    print("Y button pressed - Start Simulator")
+                    self.poll_joystick_active = False
+                    self.launch_simulator()
+                    return  # Stop polling (window will close or move on)
+
+                # X (3): Exit
+                elif idx == 3:
+                    print("X button pressed - Exit")
+                    self.root.destroy()
                     return
-            
-            # Right joystick (axis 3 = vertical) for scrolling
-            if self.joystick.get_numaxes() > 3:
-                right_stick_y = self.joystick.get_axis(3)  # Right stick vertical
-                if abs(right_stick_y) > 0.3:  # Deadzone
-                    self.handle_scroll(right_stick_y)
-                                
-            self.root.after(100, self.poll_joystick)  # Schedule next poll
 
-        except pygame.error as e:
-            print("Joystick error:", e)
-            self.root.after(100, self.poll_joystick)  # Continue polling even after errors
-    
+                # A (0): About Project
+                elif idx == 0:
+                    print("A button pressed - About Project")
+                    self.show_about_us()
+                    # Do NOT return here! Allow About menu to work
+
+                # B (1): Back to main (from About section)
+                elif idx == 1:
+                    print("B button pressed - Back")
+                    if getattr(self, '_in_about_section', False):
+                        self._in_about_section = False
+                        self.show_main_menu()
+                    # No return, keep polling
+
+            self._last_button_states[idx] = pressed
+
+        # Right stick vertical (for scrolling About section)
+        if self.joystick.get_numaxes() > 3 and getattr(self, '_about_canvas', None):
+            right_stick_y = self.joystick.get_axis(3)
+            if abs(right_stick_y) > 0.3:
+                self.handle_scroll(right_stick_y)
+
+        self.root.after(100, self.poll_joystick)
+
+
     def handle_scroll(self, stick_value):
         """Handle scrolling with right joystick in About section."""
         if hasattr(self, '_about_canvas') and self._about_canvas:
-            # Get current scroll position
             current_top, current_bottom = self._about_canvas.yview()
-            
-            # Calculate scroll amount (stick_value is between -1 and 1)
-            scroll_amount = stick_value * 0.1  # Adjust sensitivity
-            
-            # Scroll the canvas
-            if scroll_amount > 0:  # Scroll down
+            scroll_amount = stick_value * 0.1
+            if scroll_amount > 0:
                 self._about_canvas.yview_moveto(min(1.0, current_top + scroll_amount))
-            else:  # Scroll up
+            else:
                 self._about_canvas.yview_moveto(max(0.0, current_top + scroll_amount))
            
-  
     def center_window(self):
-        """Center the window on the screen."""
         self.root.update_idletasks()
         width = self.root.winfo_width()
         height = self.root.winfo_height()
@@ -147,61 +134,34 @@ class LandingForm:
         self.root.geometry(f"{width}x{height}+{x}+{y}")
     
     def clear_frame(self):
-        """Clear all widgets from the main frame."""
         for widget in self.main_frame.winfo_children():
             widget.destroy()
     
     def show_main_menu(self):
-        """Display the main menu with Start and About Us buttons."""
         self.clear_frame()
         self.poll_joystick_active = True
-        self._in_about_section = False  # Track current section
-        self._about_canvas = None  # Reset canvas reference
+        self._in_about_section = False
+        self._about_canvas = None
         
-        # Ensure joystick polling is active
         if self.joystick and not hasattr(self, '_polling_started'):
             self._polling_started = True
             self.poll_joystick()
         
-        # Header with logo
         header_frame = tk.Frame(self.main_frame, bg="#f0f2f5")
         header_frame.pack(fill=tk.X, pady=(20, 10))
         
-        # App logo (placeholder)
-        logo_label = tk.Label(
-            header_frame,
-            text="✈️",
-            font=("Arial", 48),
-            bg="#f0f2f5",
-            fg="#3498db"
-        )
+        logo_label = tk.Label(header_frame, text="✈️", font=("Arial", 48), bg="#f0f2f5", fg="#3498db")
         logo_label.pack(pady=(0, 10))
         
-        # Title
-        title_label = tk.Label(
-            header_frame,
-            text="VOR Navigation Simulator",
-            font=("Arial", 24, "bold"),
-            fg="#2c3e50",
-            bg="#f0f2f5"
-        )
+        title_label = tk.Label(header_frame, text="VOR Navigation Simulator", font=("Arial", 24, "bold"), fg="#2c3e50", bg="#f0f2f5")
         title_label.pack(pady=(0, 5))
         
-        # Subtitle
-        subtitle_label = tk.Label(
-            header_frame,
-            text="Flight Navigation Training System",
-            font=("Arial", 14),
-            fg="#7f8c8d",
-            bg="#f0f2f5"
-        )
+        subtitle_label = tk.Label(header_frame, text="Flight Navigation Training System", font=("Arial", 14), fg="#7f8c8d", bg="#f0f2f5")
         subtitle_label.pack(pady=(0, 30))
         
-        # Button container
         button_container = tk.Frame(self.main_frame, bg="#f0f2f5")
         button_container.pack(expand=True, fill=tk.BOTH, padx=50)
         
-        # Modern buttons with hover effects
         start_button = tk.Button(
             button_container,
             text="Start Simulator",
@@ -238,7 +198,6 @@ class LandingForm:
         about_button.bind("<Enter>", lambda e: about_button.config(bg="#34495e"))
         about_button.bind("<Leave>", lambda e: about_button.config(bg="#2c3e50"))
         
-        # Footer
         footer_frame = tk.Frame(self.main_frame, bg="#f0f2f5")
         footer_frame.pack(fill=tk.X, side=tk.BOTTOM, pady=(0, 10))
         
@@ -252,16 +211,13 @@ class LandingForm:
         footer_label.pack()
     
     def show_about_us(self):
-        """Display the About Us information."""
-        self._in_about_section = True  # Track that we're in about section
+        self._in_about_section = True
         self.clear_frame()
         
-        # Restart joystick polling if it was stopped
         if not self.poll_joystick_active:
             self.poll_joystick_active = True
             self.poll_joystick()
         
-        # Header with back button
         header_frame = tk.Frame(self.main_frame, bg="#f0f2f5")
         header_frame.pack(fill=tk.X, pady=(10, 20))
         
@@ -292,16 +248,12 @@ class LandingForm:
         )
         title_label.pack(side=tk.LEFT)
         
-        # Content container
         content_frame = tk.Frame(self.main_frame, bg="#ffffff", bd=0, highlightthickness=0, relief=tk.FLAT)
         content_frame.pack(fill=tk.BOTH, expand=True, padx=0, pady=0)
         
-        # Create a canvas and scrollbar
         canvas = tk.Canvas(content_frame, bg="#ffffff", highlightthickness=0)
         scrollbar = ttk.Scrollbar(content_frame, orient="vertical", command=canvas.yview)
         scrollable_frame = tk.Frame(canvas, bg="#ffffff")
-        
-        # Store canvas reference for joystick scrolling
         self._about_canvas = canvas
         
         scrollable_frame.bind(
@@ -311,16 +263,11 @@ class LandingForm:
         
         canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
         canvas.configure(yscrollcommand=scrollbar.set)
-        
-        # Pack the canvas and scrollbar
         canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
-        # Add content to the scrollable frame
         content_padding = 30
         content_width = 700
-        
-        # Project information
         sections = [
             ("THESIS TITLE", "Development of an Interactive VOR Navigation Simulator for Aviation Training"),
             ("PROJECT MEMBERS", "• [Student Name 1] - [Role/Responsibility]\n• [Student Name 2] - [Role/Responsibility]\n• [Student Name 3] - [Role/Responsibility]\n• [Student Name 4] - [Role/Responsibility]"),
@@ -336,16 +283,8 @@ class LandingForm:
         ]
         
         for i, (heading, content) in enumerate(sections):
-            # Section container
-            section_frame = tk.Frame(
-                scrollable_frame, 
-                bg="#ffffff", 
-                padx=content_padding, 
-                pady=15
-            )
+            section_frame = tk.Frame(scrollable_frame, bg="#ffffff", padx=content_padding, pady=15)
             section_frame.pack(fill=tk.X, padx=content_padding, pady=(20 if i == 0 else 10))
-            
-            # Heading
             heading_label = tk.Label(
                 section_frame,
                 text=heading,
@@ -355,8 +294,6 @@ class LandingForm:
                 anchor="w"
             )
             heading_label.pack(fill=tk.X, pady=(0, 5))
-            
-            # Content
             content_label = tk.Label(
                 section_frame,
                 text=content,
@@ -368,10 +305,8 @@ class LandingForm:
             )
             content_label.pack(fill=tk.X, anchor="w")
         
-        # Back to main button at bottom
         button_frame = tk.Frame(scrollable_frame, bg="#ffffff", pady=30)
         button_frame.pack(fill=tk.X, padx=content_padding)
-        
         main_button = tk.Button(
             button_frame,
             text="Back to Main Menu",
@@ -391,16 +326,12 @@ class LandingForm:
         main_button.bind("<Leave>", lambda e: main_button.config(bg="#2c3e50"))
     
     def launch_simulator(self):
-        """Launch the VOR simulator application."""
         try:
-            # Get the directory where this script is located
             script_dir = os.path.dirname(os.path.abspath(__file__))
             simulator_path = os.path.join(script_dir, "VOR_FINAL_UPDATED.py")
             
             if os.path.exists(simulator_path):
-                # Launch the simulator with a special argument so it knows it was started from the landing form
                 subprocess.Popen([sys.executable, simulator_path, "--from-landing-form"])
-                # Close the landing form window immediately after launching the simulator
                 self.root.destroy()
             else:
                 messagebox.showerror(
@@ -416,14 +347,9 @@ class LandingForm:
             )
 
 def main():
-    """Main function to run the landing form."""
     root = tk.Tk()
     app = LandingForm(root)
-    
-    # Make the window non-resizable for a cleaner look
     root.resizable(False, False)
-    
-    # Start the application
     root.mainloop()
 
 if __name__ == "__main__":
