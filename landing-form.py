@@ -59,61 +59,58 @@ class LandingForm:
             self.root.after(2000, self.check_joystick_connection)
       
     def poll_joystick(self):
-        """Robust polling for all button events, no 'return' except for exit/start."""
+        """Poll the joystick for button presses and right stick for scrolling."""
         if not self.joystick or not self.poll_joystick_active:
             self.root.after(100, self.poll_joystick)
             return
 
         pygame.event.pump()
-        n_buttons = self.joystick.get_numbuttons()
+        current_time = time.time()
 
-        # Setup the last_button_states dict
-        if not hasattr(self, "_last_button_states") or len(self._last_button_states) != n_buttons:
-            self._last_button_states = {i: False for i in range(n_buttons)}
+        # Debounce - prevent rapid button presses
+        if current_time - self.last_button_press < 0.3:
+            self.root.after(100, self.poll_joystick)
+            return
 
-        for idx in range(n_buttons):
-            pressed = bool(self.joystick.get_button(idx))
-            was_pressed = self._last_button_states.get(idx, False)
-            just_pressed = pressed and not was_pressed
+        # === CONTROLLER BUTTON BINDINGS ===
+        # A = 0: About Project
+        if self.joystick.get_button(0):
+            print("A (0) pressed - About Project")
+            self.last_button_press = current_time
+            self.show_about_us()
+            return
 
-            if just_pressed:
-                # Y (4): Start Simulator
-                if idx == 4:
-                    print("Y button pressed - Start Simulator")
-                    self.poll_joystick_active = False
-                    self.launch_simulator()
-                    return  # Stop polling (window will close or move on)
+        # B = 1: Back (About Project section only)
+        if self.joystick.get_button(1):
+            print("B (1) pressed - Back")
+            if hasattr(self, '_in_about_section') and self._in_about_section:
+                self.last_button_press = current_time
+                self._in_about_section = False
+                self.show_main_menu()
+                return
 
-                # X (3): Exit
-                elif idx == 3:
-                    print("X button pressed - Exit")
-                    self.root.destroy()
-                    return
+        # X = 3: Exit
+        if self.joystick.get_button(3):
+            print("X (3) pressed - Exit")
+            self.last_button_press = current_time
+            self.root.destroy()
+            return
 
-                # A (0): About Project
-                elif idx == 0:
-                    print("A button pressed - About Project")
-                    self.show_about_us()
-                    # Do NOT return here! Allow About menu to work
+        # Y = 4: Start Simulator
+        if self.joystick.get_button(4):
+            print("Y (4) pressed - Start Simulator")
+            self.last_button_press = current_time
+            self.poll_joystick_active = False
+            self.launch_simulator()
+            return
 
-                # B (1): Back to main (from About section)
-                elif idx == 1:
-                    print("B button pressed - Back")
-                    if getattr(self, '_in_about_section', False):
-                        self._in_about_section = False
-                        self.show_main_menu()
-                    # No return, keep polling
-
-            self._last_button_states[idx] = pressed
-
-        # Right stick vertical (for scrolling About section)
-        if self.joystick.get_numaxes() > 3 and getattr(self, '_about_canvas', None):
+        # Right joystick (axis 3 = vertical) for scrolling
+        if self.joystick.get_numaxes() > 3:
             right_stick_y = self.joystick.get_axis(3)
             if abs(right_stick_y) > 0.3:
                 self.handle_scroll(right_stick_y)
 
         self.root.after(100, self.poll_joystick)
-
 
     def handle_scroll(self, stick_value):
         """Handle scrolling with right joystick in About section."""
