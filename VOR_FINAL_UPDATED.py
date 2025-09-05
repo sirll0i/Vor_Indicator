@@ -289,13 +289,23 @@ def calculate_cdi_deflection(obs, bearing_to_vor):
 
 # --- GUI ---
 class VORSimulatorGUI:
-    
     def __init__(self, root):
         self.root = root
         self.root.title("Enhanced VOR Simulator")
         self.root.focus_set()
 
         root.state('zoomed')
+        
+        # VOR frequencies (example values, update as needed)
+        self.vor_frequencies = {
+            1: "116.3",
+            2: "114.5"
+        }
+        self.obs_freq_text = None
+        self.obs_tofrom_text = None
+        self.hsi_tofrom_text = None  # Initialize HSI TO/FROM text
+        self.hsi_deflection_text = None  # Initialize HSI Deflection text
+        self.hdg_current_text = None  # Initialize Current HDG text
         
         self.vor_output_visible = True
         self.vor_output_panel_items = []
@@ -1670,6 +1680,12 @@ VOR NAVIGATION:
         )
         # Label
         self.canvas.create_text(x, y + radius + 0.22 * radius, text="HDG Indicator", font=("Arial", int(radius * 0.15), "bold"), fill="darkblue")
+        
+        # Clear any existing Current HDG text and create new one
+        if hasattr(self, 'hdg_current_text') and self.hdg_current_text:
+            self.canvas.delete(self.hdg_current_text)
+        # Current HDG text above the HDG indicator
+        self.hdg_current_text = self.canvas.create_text(x, y - radius - 0.35 * radius, text="Current HDG: ---°", font=("Arial", int(radius * 0.16), "bold"), fill="darkblue")
 
 
 
@@ -1749,6 +1765,18 @@ VOR NAVIGATION:
         self.canvas.create_oval(x - radius*0.037, y - radius*0.037, x + radius*0.037, y + radius*0.037, fill="yellow")
         # Label
         self.canvas.create_text(x, y + radius + 0.22 * radius, text="HSI Indicator", font=("Arial", int(radius * 0.15), "bold"), fill="darkblue")
+        
+        # Clear any existing TO/FROM text and create new one
+        if hasattr(self, 'hsi_tofrom_text') and self.hsi_tofrom_text:
+            self.canvas.delete(self.hsi_tofrom_text)
+        # TO/FROM text above the HSI indicator (positioned higher to avoid overlap)
+        self.hsi_tofrom_text = self.canvas.create_text(x, y - radius - 0.5 * radius, text="TO/FROM: ---", font=("Arial", int(radius * 0.16), "bold"), fill="darkblue")
+        
+        # Clear any existing HSI Deflection text and create new one
+        if hasattr(self, 'hsi_deflection_text') and self.hsi_deflection_text:
+            self.canvas.delete(self.hsi_deflection_text)
+        # HSI Deflection text above the HSI indicator (below TO/FROM)
+        self.hsi_deflection_text = self.canvas.create_text(x, y - radius - 0.25 * radius, text="HSI Deflection: --- dots", font=("Arial", int(radius * 0.14), "bold"), fill="darkblue")
 
 
 
@@ -1819,6 +1847,26 @@ VOR NAVIGATION:
         )
         self.canvas.create_text(x, y + radius + 0.24 * radius, text="OBS Indicator", font=("Arial", int(radius * 0.13), "bold"), fill="darkblue")
 
+        # Add frequency display to the right of the OBS indicator
+        freq = self.vor_frequencies.get(self.active_vor, "---")
+        freq_text = f"VOR {self.active_vor} - {freq} MHz"
+        obs_x = x + radius + 80
+        obs_y = y + radius * 0.3  # Lower the position
+        if self.obs_freq_text:
+            self.canvas.delete(self.obs_freq_text)
+        self.obs_freq_text = self.canvas.create_text(obs_x, obs_y, text=freq_text, font=("Arial", 16, "bold"), fill="darkblue", anchor="w")
+
+        # Add TO/FROM indicator above the OBS indicator
+        obs = getattr(self, 'obs_angle', 0)
+        bearing = getattr(self, 'last_bearing_to_vor', 0)
+        tofrom = ""
+        if hasattr(self, 'calculate_vor_to_from'):
+            tofrom = self.calculate_vor_to_from(obs, bearing)
+        obs_to_from_y = y - radius - 40
+        if self.obs_tofrom_text:
+            self.canvas.delete(self.obs_tofrom_text)
+        self.obs_tofrom_text = self.canvas.create_text(x, obs_to_from_y, text=tofrom, font=("Arial", 18, "bold"), fill="#e67e22")
+
     def create_obs_rose_markings(self, x, y, radius, rotation_offset):
         # Responsive OBS rose: all elements scale and position with the parent
         for element in self.obs_rose_elements:
@@ -1865,6 +1913,10 @@ VOR NAVIGATION:
         radius = self.indicator_radius
         self.create_compass_rose_markings(x, y, radius, hdg)  # Rotate rose
         # The heading needle (self.hdg_needle) always points up, so nothing more is needed.
+        
+        # Update Current HDG text above HDG indicator
+        if hasattr(self, 'hdg_current_text') and self.hdg_current_text:
+            self.canvas.itemconfig(self.hdg_current_text, text=f"Current HDG: {hdg:.1f}°")
 
     def update_cdi_indicator(self, obs_angle, bearing_to_vor, direction):
         # Move the CDI needle and TO/FROM indicator
@@ -1886,6 +1938,14 @@ VOR NAVIGATION:
                         x - radius*0.13, tri_y,
                         x + radius*0.13, tri_y,
                         x, tri_y + (0.24 * radius if direction == "TO" else -0.24 * radius))
+        
+        # Update TO/FROM text above HSI indicator
+        if hasattr(self, 'hsi_tofrom_text') and self.hsi_tofrom_text:
+            self.canvas.itemconfig(self.hsi_tofrom_text, text=f"TO/FROM: {direction}")
+        
+        # Update HSI Deflection text above HSI indicator
+        if hasattr(self, 'hsi_deflection_text') and self.hsi_deflection_text:
+            self.canvas.itemconfig(self.hsi_deflection_text, text=f"HSI Deflection: {deflection:.1f} dots")
 
 
     def update_obs_indicator(self, obs_angle):
@@ -1894,6 +1954,25 @@ VOR NAVIGATION:
         radius = self.indicator_radius
         self.create_obs_rose_markings(x, y, radius, obs_angle)
         self.canvas.itemconfig(self.obs_setting_display, text=f"{int(obs_angle):03d}°")
+
+        # Update frequency display
+        freq = self.vor_frequencies.get(self.active_vor, "---")
+        freq_text = f"VOR {self.active_vor} - {freq} MHz"
+        obs_x = x + radius + 80
+        obs_y = y + radius * 0.3  # Lower the position
+        if self.obs_freq_text:
+            self.canvas.coords(self.obs_freq_text, obs_x, obs_y)
+            self.canvas.itemconfig(self.obs_freq_text, text=freq_text, fill="darkblue")
+
+        # Update TO/FROM indicator
+        bearing = getattr(self, 'last_bearing_to_vor', 0)
+        tofrom = ""
+        if hasattr(self, 'calculate_vor_to_from'):
+            tofrom = self.calculate_vor_to_from(obs_angle, bearing)
+        obs_to_from_y = y - radius - 40
+        if self.obs_tofrom_text:
+            self.canvas.coords(self.obs_tofrom_text, x, obs_to_from_y)
+            self.canvas.itemconfig(self.obs_tofrom_text, text=tofrom)
 
 
     def update_obs_cdi_needle(self, obs_angle, bearing_to_vor):
@@ -2093,6 +2172,7 @@ VOR NAVIGATION:
             bearing2 = calculate_bearing(ax, ay, vx2, vy2)
             distance2 = calculate_distance(ax, ay, vx2, vy2)
 
+
             # Use selected VOR for CDI, TO/FROM, etc
             if self.active_vor == 1:
                 vx, vy = self.vor1_x, self.vor1_y  # pixel coordinates for drawing
@@ -2109,10 +2189,14 @@ VOR NAVIGATION:
             cdi_deflection = calculate_cdi_deflection(obs, bearing_to_vor)
             radial_from_vor = (bearing_to_vor + 180) % 360
 
+            # Store last bearing for TO/FROM indicator
+            self.last_bearing_to_vor = bearing_to_vor
+
             # *** ROTATE THE TRIANGULAR CONE WITH THE RADIAL/OBS ***
             self.draw_triangular_gradient(obs, vx, vy)
 
             result = (
+                f"TO/FROM: {direction}\n"
                 f"Aircraft Grid Position: ({ax:.1f}, {ay:.1f})\n"
                 f"Distance to VOR 1: {distance1:.1f} NM  Bearing: {bearing1:.1f}°\n"
                 f"Distance to VOR 2: {distance2:.1f} NM  Bearing: {bearing2:.1f}°\n"
@@ -2120,10 +2204,7 @@ VOR NAVIGATION:
                 f"Distance: {distance:.1f} NM\n"
                 f"Bearing to VOR: {bearing_to_vor:.1f}°\n"
                 f"Radial from VOR: {radial_from_vor:.1f}°\n"
-                f"OBS Setting: {obs:.1f}°\n"
-                f"TO/FROM: {direction}\n"
-                f"HSI Deflection: {cdi_deflection:.1f} dots\n"
-                f"Current HDG: {hdg:.1f}°"
+                f"OBS Setting: {obs:.1f}°"
             )
             if getattr(self, 'vor_output_visible', True) and hasattr(self, 'result_text'):
                 self.canvas.itemconfig(self.result_text, text=result)
